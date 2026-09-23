@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Laya System-One — Autonomous Tetris Player</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.02); }
+    }
+    .flash-line {
+      animation: flash 0.25s linear infinite;
+    }
+    @keyframes flash {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(2.5); }
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] min-h-screen p-4 font-sans select-none">
+
+  <!-- TOP HEADER & SERVER CONNECTION -->
+  <header class="max-w-6xl mx-auto mb-4 bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xl border border-indigo-500/30">
+          ⚡
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight flex items-center gap-2">
+            Laya System-One
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono border border-emerald-500/30">
+              Tetris Autonomous Agent
+            </span>
+          </h1>
+          <p class="text-xs text-[var(--muted-foreground)]">
+            Decisões em tempo real via protocolo wire TypeSafe Jev (<code class="font-mono text-indigo-400">POST /v1/systemone</code>)
+          </p>
+        </div>
+      </div>
+
+      <!-- SERVER URL CONFIG -->
+      <div class="flex items-center gap-2 bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs">
+        <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></div>
+        <span class="text-[var(--muted-foreground)]">Servidor:</span>
+        <input id="serverUrlInput" type="text" value="http://localhost:8990" 
+               class="bg-transparent border-none outline-none font-mono text-[var(--foreground)] w-44" />
+        <button id="btnConnect" onclick="checkConnection()" 
+                class="px-2 py-1 rounded bg-[var(--border)] hover:bg-indigo-600 hover:text-white transition font-medium">
+          Verificar
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN INTERFACE -->
+  <main class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+    <!-- LEFT COLUMN: TETRIS CANVAS & CONTROLS (5 cols) -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col items-center">
+        
+        <!-- CANVAS CONTAINER -->
+        <div class="relative bg-slate-950 rounded-lg p-2 border-2 border-slate-800 shadow-inner">
+          <canvas id="tetrisCanvas" width="240" height="432" class="rounded block"></canvas>
+          <div id="canvasOverlay" class="absolute inset-0 bg-black/60 rounded flex flex-col items-center justify-center gap-2 opacity-0 pointer-events-none transition-opacity">
+            <span id="overlayText" class="text-lg font-bold text-white tracking-wider">PAUSADO</span>
+          </div>
+        </div>
+
+        <!-- CONTROLS -->
+        <div class="w-full mt-4 flex flex-col gap-3">
+          <div class="grid grid-cols-3 gap-2">
+            <button id="btnPlayPause" onclick="toggleAutoPlay()" 
+                    class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow transition active:scale-95">
+              <span id="playIcon">▶️</span> <span id="playText">Auto Play</span>
+            </button>
+            <button id="btnStep" onclick="stepGame()" 
+                    class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-[var(--border)] hover:bg-[var(--border)]/80 text-[var(--foreground)] transition active:scale-95">
+              <span>⏭️</span> Passo a Passo
+            </button>
+            <button onclick="resetGame()" 
+                    class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition active:scale-95">
+              <span>🔄</span> Reiniciar
+            </button>
+          </div>
+
+          <!-- SPEED SELECTOR -->
+          <div class="flex items-center justify-between text-xs text-[var(--muted-foreground)] bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
+            <span>Velocidade:</span>
+            <div class="flex gap-1">
+              <button onclick="setSpeed(1200, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Lenta</button>
+              <button onclick="setSpeed(600, this)" class="speed-btn px-2 py-1 rounded bg-indigo-600 text-white font-mono">Normal</button>
+              <button onclick="setSpeed(200, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Rápida</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- GAME STATS STRIP -->
+        <div class="w-full mt-4 grid grid-cols-4 gap-2 text-center text-xs">
+          <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Pontos</div>
+            <div id="scoreVal" class="text-base font-bold text-amber-400 font-mono mt-0.5">0</div>
+          </div>
+          <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Linhas</div>
+            <div id="linesVal" class="text-base font-bold text-emerald-400 font-mono mt-0.5">0</div>
+          </div>
+          <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Altura</div>
+            <div id="heightVal" class="text-base font-bold text-cyan-400 font-mono mt-0.5">0/18</div>
+          </div>
+          <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Próxima</div>
+            <div id="nextPieceVal" class="text-base font-bold text-fuchsia-400 font-mono mt-0.5">-</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: LAYA SYSTEM-1 AI INSPECTOR (7 cols) -->
+    <div class="lg:col-span-7 flex flex-col gap-4">
+
+      <!-- LIVE DECISION CARD -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col gap-3">
+        <div class="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-ping"></div>
+            <h2 class="text-sm font-bold tracking-tight">Inspeção da Decisão ao Vivo</h2>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-[var(--muted-foreground)]">Latência HTTP:</span>
+            <span id="latencyBadge" class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              -- ms
+            </span>
+          </div>
+        </div>
+
+        <!-- SELECTED MOVE HERO -->
+        <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 flex flex-col gap-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-[var(--muted-foreground)]">Movimento Selecionado:</span>
+            <span id="decisionConfidence" class="font-mono text-xs text-indigo-400 font-semibold">Confiança: --%</span>
+          </div>
+          <div id="decisionName" class="text-base font-bold text-emerald-400 font-mono">
+            Aguardando início do jogo...
+          </div>
+          <p id="decisionDesc" class="text-xs text-[var(--muted-foreground)] italic">
+            O agente consultará o servidor Laya HTTP a cada peça caída.
+          </p>
+        </div>
+
+        <!-- RISK METRICS -->
+        <div class="grid grid-cols-2 gap-3 text-xs">
+          <!-- Danger score -->
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5 flex flex-col gap-1.5">
+            <div class="flex justify-between items-center">
+              <span class="text-[var(--muted-foreground)]">Nível de Perigo (Score):</span>
+              <span id="dangerScoreText" class="font-mono font-bold text-amber-400">0.0 / 2.0</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+              <div id="dangerBar" class="bg-amber-400 h-full rounded-full transition-all duration-300" style="width: 10%"></div>
+            </div>
+          </div>
+
+          <!-- Imminent Loss (noul) -->
+          <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5 flex flex-col gap-1.5">
+            <div class="flex justify-between items-center">
+              <span class="text-[var(--muted-foreground)]">Risco de Derrota (Noul):</span>
+              <span id="lossRiskText" class="font-mono font-bold text-cyan-400">0.0%</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+              <div id="lossBar" class="bg-cyan-400 h-full rounded-full transition-all duration-300" style="width: 5%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CANDIDATES COMPARISON TABLE -->
+        <div class="mt-1">
+          <div class="text-xs font-semibold text-[var(--muted-foreground)] mb-1.5 flex justify-between">
+            <span>Candidatos Avaliados pelo Laya:</span>
+            <span class="text-[10px] text-indigo-400">Distribuição Softmax</span>
+          </div>
+          <div id="candidatesList" class="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+            <div class="text-xs text-[var(--muted-foreground)] p-2 text-center">Nenhum candidato ainda.</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- DECISION HISTORY LOG -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col gap-2">
+        <h3 class="text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider">Histórico de Decisões HTTP</h3>
+        <div id="historyLog" class="flex flex-col gap-1 font-mono text-[11px] max-h-36 overflow-y-auto pr-1">
+          <div class="text-[var(--muted-foreground)] italic">Pronto para iniciar.</div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- JAVASCRIPT: TETRIS & HTTP CLIENT -->
+  <script>
+    const COLS = 10;
+    const ROWS = 18;
+    const BLOCK_SIZE = 24;
+
+    const PIECES = {
+      I: { shape: [[[1,1,1,1]], [[1],[1],[1],[1]]], color: '#38bdf8' },
+      O: { shape: [[[1,1],[1,1]]], color: '#facc15' },
+      T: { shape: [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[1,1,1],[0,1,0]], [[0,1],[1,1],[0,1]]], color: '#c084fc' },
+      L: { shape: [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]], color: '#fb923c' },
+      J: { shape: [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]], color: '#60a5fa' },
+      S: { shape: [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]], color: '#4ade80' },
+      Z: { shape: [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]], color: '#f87171' }
+    };
+    const PIECE_KEYS = Object.keys(PIECES);
+
+    let board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+    let score = 0;
+    let linesCleared = 0;
+    let turnCount = 0;
+    let nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
+
+    let isAutoPlaying = false;
+    let autoPlayTimer = null;
+    let speedDelay = 600;
+    let serverConnected = false;
+
+    const canvas = document.getElementById('tetrisCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // INITIAL SETUP
+    function init() {
+      // Seed a few puzzle blocks on bottom row
+      board[ROWS - 1] = [1, 1, 1, 1, 1, 1, 0, 1, 1, 1];
+      board[ROWS - 2] = [1, 0, 1, 1, 0, 1, 0, 1, 0, 1];
+      drawBoard();
+      checkConnection();
+    }
+
+    // CHECK SERVER CONNECTION
+    async function checkConnection() {
+      const url = document.getElementById('serverUrlInput').value.trim();
+      const dot = document.getElementById('statusDot');
+      try {
+        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+          const data = await res.json();
+          dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+          serverConnected = true;
+          logMessage(`✓ Servidor conectado: ${data.model} (${url})`);
+        } else {
+          throw new Error('Status not 200');
+        }
+      } catch (err) {
+        dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+        serverConnected = false;
+        logMessage(`⚠️ Servidor inacessível em ${url}. Verifique se o servidor está ativo.`);
+      }
+    }
+
+    // DRAW TETRIS BOARD
+    function drawBoard(ghostCandidate = null) {
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid lines
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 0.5;
+      for (let c = 0; c <= COLS; c++) {
+        ctx.beginPath();
+        ctx.moveTo(c * BLOCK_SIZE, 0);
+        ctx.lineTo(c * BLOCK_SIZE, ROWS * BLOCK_SIZE);
+        ctx.stroke();
+      }
+      for (let r = 0; r <= ROWS; r++) {
+        ctx.beginPath();
+        ctx.moveTo(0, r * BLOCK_SIZE);
+        ctx.lineTo(COLS * BLOCK_SIZE, r * BLOCK_SIZE);
+        ctx.stroke();
+      }
+
+      // Draw blocks
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (board[r][c] !== 0) {
+            drawBlock(c, r, typeof board[r][c] === 'string' ? board[r][c] : '#818cf8');
+          }
+        }
+      }
+
+      // Draw Ghost piece preview if supplied
+      if (ghostCandidate) {
+        const shape = ghostCandidate.shape;
+        const col = ghostCandidate.col;
+        const row = ghostCandidate.result.row;
+        const color = PIECES[ghostCandidate.pieceKey]?.color || '#ffffff';
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.fillStyle = color + '33'; // translucent
+
+        for (let r = 0; r < shape.length; r++) {
+          for (let c = 0; c < shape[0].length; c++) {
+            if (shape[r][c]) {
+              const x = (col + c) * BLOCK_SIZE;
+              const y = (row + r) * BLOCK_SIZE;
+              ctx.fillRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+              ctx.strokeRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+            }
+          }
+        }
+      }
+
+      // Update UI Stats
+      document.getElementById('scoreVal').innerText = score;
+      document.getElementById('linesVal').innerText = linesCleared;
+      const heights = getColumnHeights(board);
+      const maxH = Math.max(...heights);
+      document.getElementById('heightVal').innerText = `${maxH}/${ROWS}`;
+      document.getElementById('nextPieceVal').innerText = nextPieceKey;
+    }
+
+    function drawBlock(c, r, color) {
+      const x = c * BLOCK_SIZE;
+      const y = r * BLOCK_SIZE;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+
+      // Inner highlight
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, 3);
+      ctx.fillRect(x + 1, y + 1, 3, BLOCK_SIZE - 2);
+
+      // Inner shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fillRect(x + 1, y + BLOCK_SIZE - 4, BLOCK_SIZE - 2, 3);
+      ctx.fillRect(x + BLOCK_SIZE - 4, y + 1, 3, BLOCK_SIZE - 2);
+    }
+
+    // TETRIS SIMULATOR ALGORITHMS
+    function cloneBoard(b) {
+      return b.map(row => [...row]);
+    }
+
+    function getColumnHeights(b) {
+      const heights = Array(COLS).fill(0);
+      for (let c = 0; c < COLS; c++) {
+        for (let r = 0; r < ROWS; r++) {
+          if (b[r][c] !== 0) {
+            heights[c] = ROWS - r;
+            break;
+          }
+        }
+      }
+      return heights;
+    }
+
+    function countHoles(b) {
+      let holes = 0;
+      for (let c = 0; c < COLS; c++) {
+        let blockFound = false;
+        for (let r = 0; r < ROWS; r++) {
+          if (b[r][c] !== 0) {
+            blockFound = true;
+          } else if (blockFound && b[r][c] === 0) {
+            holes++;
+          }
+        }
+      }
+      return holes;
+    }
+
+    function calculateBumpiness(heights) {
+      let b = 0;
+      for (let i = 0; i < heights.length - 1; i++) {
+        b += Math.abs(heights[i] - heights[i + 1]);
+      }
+      return b;
+    }
+
+    function canPlace(b, shape, row, col) {
+      const h = shape.length;
+      const w = shape[0].length;
+      if (col < 0 || col + w > COLS) return false;
+      if (row < 0 || row + h > ROWS) return false;
+
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          if (shape[r][c] && b[row + r][col + c] !== 0) return false;
+        }
+      }
+      return true;
+    }
+
+    function dropPiece(b, shape, col, color) {
+      const h = shape.length;
+      let finalRow = -1;
+      for (let r = 0; r <= ROWS - h; r++) {
+        if (canPlace(b, shape, r, col)) {
+          finalRow = r;
+        } else {
+          break;
+        }
+      }
+      if (finalRow === -1) return null;
+
+      const newBoard = cloneBoard(b);
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < shape[0].length; c++) {
+          if (shape[r][c]) {
+            newBoard[finalRow + r][col + c] = color;
+          }
+        }
+      }
+
+      // Check lines
+      let cleared = 0;
+      for (let r = ROWS - 1; r >= 0; r--) {
+        if (newBoard[r].every(cell => cell !== 0)) {
+          cleared++;
+          newBoard.splice(r, 1);
+          newBoard.unshift(Array(COLS).fill(0));
+          r++;
+        }
+      }
+
+      return { board: newBoard, row: finalRow, linesCleared: cleared };
+    }
+
+    function generateCandidateMoves(pieceKey) {
+      const rotations = PIECES[pieceKey].shape;
+      const color = PIECES[pieceKey].color;
+      const candidates = [];
+
+      for (let rotIdx = 0; rotIdx < rotations.length; rotIdx++) {
+        const shape = rotations[rotIdx];
+        const w = shape[0].length;
+
+        for (let col = 0; col <= COLS - w; col++) {
+          const result = dropPiece(board, shape, col, color);
+          if (!result) continue;
+
+          const heights = getColumnHeights(result.board);
+          const maxH = Math.max(...heights);
+          const holes = countHoles(result.board);
+          const bumpiness = calculateBumpiness(heights);
+
+          const features = [];
+          if (result.linesCleared > 0) features.push(`clears ${result.linesCleared} line(s)`);
+          if (holes === 0) features.push('clean surface 0 holes');
+          else features.push(`creates ${holes} hole(s)`);
+          if (bumpiness <= 4) features.push('keeps surface flat');
+          else features.push(`surface bumpiness ${bumpiness}`);
+          features.push(`height ${maxH}/${ROWS}`);
+
+          candidates.push({
+            id: `col${col}_rot${rotIdx}`,
+            col,
+            rotIdx,
+            shape,
+            pieceKey,
+            result,
+            maxH,
+            holes,
+            linesCleared: result.linesCleared,
+            bumpiness,
+            description: `Col ${col} (rot ${rotIdx}): ${features.join(', ')}`
+          });
+        }
+      }
+
+      candidates.sort((a, b) => {
+        if (b.linesCleared !== a.linesCleared) return b.linesCleared - a.linesCleared;
+        if (a.holes !== b.holes) return a.holes - b.holes;
+        if (a.maxH !== b.maxH) return a.maxH - b.maxH;
+        return a.bumpiness - b.bumpiness;
+      });
+
+      return candidates.slice(0, 5);
+    }
+
+    // MAIN STEP EXECUTION WITH HTTP REQUEST TO LAYA
+    async function stepGame() {
+      const currentPieceKey = nextPieceKey;
+      nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
+
+      const candidates = generateCandidateMoves(currentPieceKey);
+      if (candidates.length === 0) {
+        logMessage('⚠️ Fim de Jogo! Nenhuma jogada legal disponível.');
+        if (isAutoPlaying) toggleAutoPlay();
+        return;
+      }
+
+      // Build TypeSafe Jev Request Payload
+      const criteriaMap = {};
+      candidates.forEach(c => criteriaMap[c.id] = c.description);
+
+      const heights = getColumnHeights(board);
+      const currentMaxH = Math.max(...heights);
+
+      const url = document.getElementById('serverUrlInput').value.trim();
+      const payload = {
+        model: 'laya-multilingual',
+        state: {
+          game: 'Tetris',
+          turn: ++turnCount,
+          falling_piece: currentPieceKey,
+          score,
+          lines_cleared: linesCleared,
+          max_tower_height: `${currentMaxH}/${ROWS}`,
+          holes_count: countHoles(board)
+        },
+        questions: {
+          move: {
+            type: 'choice',
+            instructions: 'Select the optimal Tetris move that maximizes cleared lines and maintains a clean, low board surface.',
+            criteria: criteriaMap
+          },
+          danger: {
+            type: 'score',
+            instructions: 'Assess the current danger level based on height and holes',
+            criteria: ['Safe: low height', 'Moderate: some holes', 'Critical: near top ceiling']
+          },
+          loss_risk: {
+            type: 'noul',
+            instructions: 'Is the game in immediate danger of topping out?',
+            threshold: 0.5
+          }
+        }
+      };
+
+      // Call Laya HTTP Server
+      let decisionData = null;
+      let latencyMs = 0;
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch(`${url}/v1/systemone`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        decisionData = await res.json();
+        latencyMs = performance.now() - t0;
+      } catch (err) {
+        latencyMs = performance.now() - t0;
+        logMessage(`⚠️ Erro na chamada HTTP: ${err.message}. Fazendo fallback heurístico.`);
+      }
+
+      let chosenCandidate = candidates[0];
+      let confidence = 0;
+      let probMap = {};
+
+      if (decisionData && decisionData.answers && decisionData.answers.move) {
+        const chosenId = decisionData.answers.move.choice;
+        chosenCandidate = candidates.find(c => c.id === chosenId) || candidates[0];
+        confidence = (decisionData.answers.move.confidence * 100).toFixed(1);
+        probMap = decisionData.answers.move.probabilities || {};
+
+        // Update Risk UI
+        const dangerScore = decisionData.answers.danger?.score || 0;
+        document.getElementById('dangerScoreText').innerText = `${dangerScore.toFixed(2)} / 2.0`;
+        document.getElementById('dangerBar').style.width = `${Math.min(100, (dangerScore / 2.0) * 100)}%`;
+
+        const lossNoul = decisionData.answers.loss_risk?.noul || 0;
+        document.getElementById('lossRiskText').innerText = `${(lossNoul * 100).toFixed(1)}%`;
+        document.getElementById('lossBar').style.width = `${lossNoul * 100}%`;
+      }
+
+      // Update Decision Hero
+      document.getElementById('latencyBadge').innerText = `${latencyMs.toFixed(0)} ms`;
+      document.getElementById('decisionConfidence').innerText = `Confiança: ${confidence}%`;
+      document.getElementById('decisionName').innerText = `${chosenCandidate.id} (Peça ${currentPieceKey})`;
+      document.getElementById('decisionDesc').innerText = chosenCandidate.description;
+
+      // Render candidates list
+      renderCandidates(candidates, chosenCandidate.id, probMap);
+
+      // Ghost preview before drop
+      drawBoard(chosenCandidate);
+
+      // Apply move
+      setTimeout(() => {
+        board = chosenCandidate.result.board;
+        if (chosenCandidate.linesCleared > 0) {
+          linesCleared += chosenCandidate.linesCleared;
+          score += chosenCandidate.linesCleared * 100;
+        }
+        score += 10;
+        drawBoard();
+        logMessage(`Rodada #${turnCount} | Peça ${currentPieceKey} -> ${chosenCandidate.id} (${latencyMs.toFixed(0)}ms)`);
+      }, Math.min(speedDelay * 0.4, 250));
+    }
+
+    function renderCandidates(candidates, selectedId, probMap) {
+      const listEl = document.getElementById('candidatesList');
+      listEl.innerHTML = '';
+
+      candidates.forEach(c => {
+        const isSelected = c.id === selectedId;
+        const prob = probMap[c.id] !== undefined ? (probMap[c.id] * 100).toFixed(1) : '--';
+        
+        const card = document.createElement('div');
+        card.className = `p-2 rounded border text-xs flex items-center justify-between transition ${
+          isSelected 
+            ? 'bg-indigo-500/10 border-indigo-500 text-indigo-300 font-semibold' 
+            : 'bg-[var(--background)] border-[var(--border)] text-[var(--muted-foreground)]'
+        }`;
+
+        card.innerHTML = `
+          <div class="flex items-center gap-2 truncate">
+            <span>${isSelected ? '👉' : '▫️'}</span>
+            <span class="truncate font-mono">${c.id}: ${c.description}</span>
+          </div>
+          <span class="font-mono text-[10px] ml-2 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700">
+            ${prob}%
+          </span>
+        `;
+        listEl.appendChild(card);
+      });
+    }
+
+    function toggleAutoPlay() {
+      isAutoPlaying = !isAutoPlaying;
+      const btn = document.getElementById('btnPlayPause');
+      const icon = document.getElementById('playIcon');
+      const text = document.getElementById('playText');
+      const overlay = document.getElementById('canvasOverlay');
+
+      if (isAutoPlaying) {
+        btn.className = 'py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white shadow transition active:scale-95';
+        icon.innerText = '⏸️';
+        text.innerText = 'Pausar';
+        overlay.classList.add('opacity-0');
+        autoPlayTimer = setInterval(stepGame, speedDelay);
+      } else {
+        btn.className = 'py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow transition active:scale-95';
+        icon.innerText = '▶️';
+        text.innerText = 'Auto Play';
+        clearInterval(autoPlayTimer);
+      }
+    }
+
+    function setSpeed(ms, btn) {
+      speedDelay = ms;
+      document.querySelectorAll('.speed-btn').forEach(b => {
+        b.className = 'speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono';
+      });
+      btn.className = 'speed-btn px-2 py-1 rounded bg-indigo-600 text-white font-mono';
+
+      if (isAutoPlaying) {
+        clearInterval(autoPlayTimer);
+        autoPlayTimer = setInterval(stepGame, speedDelay);
+      }
+    }
+
+    function resetGame() {
+      if (isAutoPlaying) toggleAutoPlay();
+      board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      score = 0;
+      linesCleared = 0;
+      turnCount = 0;
+      // Pre-seed some puzzle blocks
+      board[ROWS - 1] = [1, 1, 1, 1, 1, 1, 0, 1, 1, 1];
+      board[ROWS - 2] = [1, 0, 1, 1, 0, 1, 0, 1, 0, 1];
+      drawBoard();
+      logMessage('Jogo reiniciado.');
+    }
+
+    function logMessage(msg) {
+      const log = document.getElementById('historyLog');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'truncate text-[var(--muted-foreground)]';
+      div.innerHTML = `<span class="text-slate-500">[${time}]</span> ${msg}`;
+      log.prepend(div);
+      if (log.children.length > 25) log.lastChild.remove();
+    }
+
+    // RUN INIT
+    init();
+  </script>
+</body>
+</html>
