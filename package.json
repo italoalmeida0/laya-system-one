@@ -1,0 +1,44 @@
+{
+  "name": "laya-system-one",
+  "version": "1.0.0",
+  "description": "Self-contained, ultra-fast System 1 decision engine with WebGPU/WASM acceleration, 100% wire-compatible with TypeSafe Jev (/v1/systemone). Runs offline in Node.js, Bun, and browsers.",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "type": "module",
+  "bin": {
+    "laya-system-one": "./bin/cli.js"
+  },
+  "scripts": {
+    "start": "node ./bin/cli.js",
+    "test": "node ./test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/italoalmeida0/laya-system-one.git"
+  },
+  "keywords": [
+    "laya",
+    "system-one",
+    "decision-engine",
+    "jev",
+    "typesafe",
+    "webgpu",
+    "wasm",
+    "onnx",
+    "multilingual",
+    "classifier",
+    "triage",
+    "guardrails"
+  ],
+  "author": "Italo Almeida <https://github.com/italoalmeida0>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/italoalmeida0/laya-system-one/issues"
+  },
+  "homepage": "https://github.com/italoalmeida0/laya-system-one#readme",
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
+    "onnxruntime-node": "^1.21.0",
+    "onnxruntime-web": "^1.21.0"
+  }
+}

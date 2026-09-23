@@ -1,0 +1,6 @@
+node_modules/
+.git/
+test.js
+benchmark_gpu.js
+*.log
+*.tgz
