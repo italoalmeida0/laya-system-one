@@ -1,8 +1,75 @@
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MODEL_RELEASE_URL = 'https://github.com/italoalmeida0/laya-system-one/releases/download/v1.0.0/model.onnx';
+
+async function resolveModelPath(modelDir) {
+  const localPath = path.join(modelDir, 'model.onnx');
+  if (fs.existsSync(localPath)) {
+    return localPath;
+  }
+
+  // Check user cache directory fallback if models dir is read-only
+  const cacheDir = path.join(os.homedir(), '.cache', 'laya-system-one');
+  const cachePath = path.join(cacheDir, 'model.onnx');
+  if (fs.existsSync(cachePath)) {
+    return cachePath;
+  }
+
+  let targetPath = localPath;
+  try {
+    if (!fs.existsSync(modelDir)) {
+      fs.mkdirSync(modelDir, { recursive: true });
+    }
+    const testFile = path.join(modelDir, '.test_write');
+    fs.writeFileSync(testFile, '');
+    fs.unlinkSync(testFile);
+  } catch (err) {
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    targetPath = cachePath;
+  }
+
+  console.log(`[laya-system-one] Downloading INT8 model asset from GitHub Releases (~324 MB)...`);
+  console.log(`[laya-system-one] Source: ${MODEL_RELEASE_URL}`);
+
+  const res = await fetch(MODEL_RELEASE_URL);
+  if (!res.ok) {
+    throw new Error(`Failed to download model from ${MODEL_RELEASE_URL}: HTTP ${res.status} ${res.statusText}`);
+  }
+
+  const total = parseInt(res.headers.get('content-length') || '324125608', 10);
+  let loaded = 0;
+  let lastLogged = 0;
+
+  const fileStream = fs.createWriteStream(targetPath);
+  const reader = res.body.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    fileStream.write(Buffer.from(value));
+    loaded += value.length;
+    const pct = Math.floor((loaded / total) * 100);
+    if (pct >= lastLogged + 10 || pct === 100) {
+      if (process.stdout && process.stdout.write) {
+        process.stdout.write(`\r[laya-system-one] Download progress: ${pct}% (${(loaded / (1024 * 1024)).toFixed(1)} MB / ${(total / (1024 * 1024)).toFixed(1)} MB)`);
+      }
+      lastLogged = pct;
+    }
+  }
+
+  await new Promise((resolve, reject) => {
+    fileStream.end((err) => (err ? reject(err) : resolve()));
+  });
+
+  console.log(`\n[laya-system-one] Model ready at: ${targetPath}`);
+  return targetPath;
+}
 
 // Dynamic runtime resolver:
 // - In Node.js: uses onnxruntime-node (Native C++ CPU at ~15ms + Native WebGPU)
@@ -34,7 +101,7 @@ export class LayaEngine {
   static async load(options = {}) {
     const ort = await getOrt();
     const modelDir = options.modelDir || path.resolve(__dirname, '../models');
-    const modelPath = path.join(modelDir, 'model.onnx');
+    const modelPath = await resolveModelPath(modelDir);
     const configPath = path.join(modelDir, 'rl_agent_config.json');
 
     let config = {

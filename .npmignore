@@ -4,3 +4,4 @@ test.js
 benchmark_gpu.js
 *.log
 *.tgz
+models/model.onnx
