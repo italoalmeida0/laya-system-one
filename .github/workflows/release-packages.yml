@@ -168,6 +168,9 @@ jobs:
             ldd "$SLOT/laya-serve" | head -5
           '
 
+      - name: Take ownership of what the container wrote as root
+        run: sudo chown -R "$(id -u):$(id -g)" dist/bin/linux-${{ matrix.arch }}-musl
+
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
       - run: npm ci
@@ -213,9 +216,11 @@ jobs:
           node tools/model-chunks.js build --chunk-mb 24
           node tools/model-chunks.js assemble --out "$RUNNER_TEMP/model.from-chunks.onnx"
           node tools/model-chunks.js verify --model "$RUNNER_TEMP/model.from-chunks.onnx"
-          # a model that only round-trips is not enough: make sure the
-          # reassembled file still produces the right answer
-          LAYA_MODEL_PATH="$RUNNER_TEMP/model.from-chunks.onnx" node ./tools/run-tests.js tests/integration/engine.test.js
+          # Round-tripping is not enough: the reassembled file must still
+          # answer correctly. This job has no compiled binary, so it runs the
+          # bundled wasm engine - which is exactly the path a browser or an
+          # exotic platform would use, and it exercises the wasm build too.
+          LAYA_MODEL_PATH="$RUNNER_TEMP/model.from-chunks.onnx" node tools/quick-check.js --wasm
 
       - name: Upload the chunk packages
         uses: actions/upload-artifact@v7

@@ -12,6 +12,11 @@
  *   node tools/quick-check.js                       # this checkout's binary
  *   node tools/quick-check.js --binary dist/bin/linux-x64/laya-serve
  *   node tools/quick-check.js --model models/model.onnx
+ *   node tools/quick-check.js --wasm                # no binary needed: runs
+ *                                                   # the bundled wasm engine,
+ *                                                   # which is how a model that
+ *                                                   # was just reassembled from
+ *                                                   # chunks is verified
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,6 +36,7 @@ if (explicitBinary) {
   process.env.LAYA_SERVE_BIN = path.resolve(ROOT, explicitBinary);
 }
 
+const useWasm = args.includes('--wasm');
 const modelPath = val('model', null);
 if (modelPath && !process.env.LAYA_MODEL_PATH) {
   process.env.LAYA_MODEL_PATH = path.resolve(ROOT, modelPath);
@@ -60,11 +66,16 @@ const QUESTIONS = {
 
 const { Laya } = await import('../src/agent.js');
 
+console.log(`[quick] backend : ${useWasm ? 'wasm' : 'native'}`);
 console.log(`[quick] platform: ${process.platform}-${process.arch}`);
 if (explicitBinary) console.log(`[quick] binary  : ${process.env.LAYA_SERVE_BIN}`);
 
 const t0 = Date.now();
-const laya = await Laya.load({ modelDir: path.join(ROOT, 'models'), backend: 'native' });
+const laya = await Laya.load({
+  modelDir: path.join(ROOT, 'models'),
+  backend: useWasm ? 'wasm' : 'native',
+  wasmWorkers: 1
+});
 console.log(`[quick] ready in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
 let pass = 0;
