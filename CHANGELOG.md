@@ -28,6 +28,16 @@ model. `dependencies` is empty.
     dependency) was deleted with it.
 
 ### Fixed
+- **macOS Intel (darwin-x64) now ships a native binary.** Three stacked
+  causes, each found by testing: ort-sys has no prebuilt for
+  x86_64-apple-darwin; Microsoft stopped publishing osx-x86_64 dylibs after
+  1.23; the 1.22.0 dylib segfaults during model load (with and without graph
+  optimization - the bug is in its x86_64 loader). The fix is a
+  `mac-x64-legacy` cargo feature (ort rebuilt against API 23, Level2 graph
+  optimization which is the max the 1.23 API supports beyond EXTENDED... in
+  fact Level2 IS the max valid) linked against the official 1.23.0 dylib,
+  shipped next to the binary with an `@loader_path` rewrite. Measured on
+  CI: 65 ms per question, 15.5 q/s.
 - **backends could answer differently for the same request.** The native
   binary iterates the question criteria from a `BTreeMap` (sorted keys) while
   the JS engine kept JSON insertion order, so the two placed the options at

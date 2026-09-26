@@ -176,6 +176,7 @@ Measured by CI on every platform we ship a binary for (Node 22, the bundled
 | **win-x64** | 1.6 s | 119 ms | 100 ms | 98 / 116 | 29 ms | 34.3 q/s |
 | **win-arm64** | 1.5 s | 237 ms | 181 ms | 176 / 212 | 47 ms | 21.3 q/s |
 | **mac-arm64** | 2.3 s | 434 ms | 273 ms | 272 / 316 | 56 ms | 18.0 q/s |
+| **mac-x64** (Intel, ORT 1.23) | 2.9 s | 295 ms | 260 ms | 258 / 272 | 65 ms | 15.5 q/s |
 
 `init` is loading the model, `cold` is the very first question (warmup and
 arena allocation), and the warm numbers are the sustained latency.
