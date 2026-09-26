@@ -168,8 +168,9 @@ jobs:
             ldd "$SLOT/laya-serve" | head -5
           '
 
-      - name: Take ownership of what the container wrote as root
-        run: sudo chown -R "$(id -u):$(id -g)" dist/bin/linux-${{ matrix.arch }}-musl
+      - name: Take ownership of everything the container wrote as root
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" dist native 2>/dev/null || true
 
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
