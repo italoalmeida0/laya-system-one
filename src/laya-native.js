@@ -190,14 +190,16 @@ export class NativeServer {
         clearTimeout(timer);
         reject(new Error(`failed to spawn laya-serve (${bin}): ${err.message}`));
       });
-      proc.on('exit', (code) => {
+      proc.on('exit', (code, signal) => {
         if (!this.url) {
           clearTimeout(timer);
           // Include the child's stderr: a Rust panic exits 101 and the reason
           // is only visible there, so without it debugging CI is guesswork.
+          // A null code means killed by signal (dyld, OOM, illegal insn) -
+          // report the signal explicitly.
           const detail = errBuf.trim().slice(-2000);
           reject(new Error(
-            `laya-serve exited before ready (code ${code}, bin: ${bin})` +
+            `laya-serve exited before ready (code ${code}, signal ${signal}, bin: ${bin})` +
             (detail ? `\n--- laya-serve stderr ---\n${detail}` : '\n(no stderr)')
           ));
         }
