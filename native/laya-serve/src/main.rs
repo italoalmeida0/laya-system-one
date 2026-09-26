@@ -78,8 +78,14 @@ async fn main() -> anyhow::Result<()> {
     // rejects ORT_ENABLE_LAYOUT/ORT_ENABLE_ALL - max valid is EXTENDED.
     // Level2 already covers the fusions that matter for a CPU transformer
     // (GELU, LayerNorm, Attention), so the legacy build uses it.
+    // NOTE: if the 1.22 optimizer itself segfaults on this graph, drop to
+    // Disabled via the LAYA_ORT_NO_OPTIMIZE env (CI diagnosis knob).
     #[cfg(feature = "mac-x64-legacy")]
-    let opt_level = GraphOptimizationLevel::Level2;
+    let opt_level = if std::env::var("LAYA_ORT_NO_OPTIMIZE").is_ok() {
+        GraphOptimizationLevel::Disable
+    } else {
+        GraphOptimizationLevel::Level2
+    };
     #[cfg(not(feature = "mac-x64-legacy"))]
     let opt_level = GraphOptimizationLevel::Level3;
     let session = if args.threads > 0 {
