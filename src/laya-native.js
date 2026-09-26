@@ -65,6 +65,16 @@ export function resolveBinary() {
   return 'laya-serve'; // PATH fallback
 }
 
+/**
+ * True when a bundled `laya-serve` binary is available for this platform
+ * (as opposed to the PATH fallback). Tests use this to skip the native
+ * backend on checkouts that have not built it.
+ */
+export function hasBundledBinary() {
+  const resolved = resolveBinary();
+  return resolved !== 'laya-serve' && fs.existsSync(resolved);
+}
+
 export class NativeServer {
   constructor(options = {}) {
     this.modelDir = options.modelDir || path.join(__dirname, '..', 'models');

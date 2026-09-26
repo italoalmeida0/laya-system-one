@@ -33,7 +33,7 @@ jobs:
             artifact: darwin-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -51,11 +51,12 @@ jobs:
           cp "$BIN" '${{ matrix.out }}'
           chmod +x '${{ matrix.out }}' 2>/dev/null || true
 
-      # Artifact name == output directory so download-artifact can restore
-      # the dist/bin/<platform>/ layout with a single step.
-      - uses: actions/upload-artifact@v4
+      # Artifact name == output directory. The consumer (release.yml /
+      # publish-npm.yml) re-homes the binary explicitly, so the internal
+      # artifact layout does not matter.
+      - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
+          name: bin-${{ matrix.artifact }}
           path: ${{ matrix.out }}
           if-no-files-found: error
           retention-days: 14

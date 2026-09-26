@@ -7,6 +7,21 @@ import path from 'node:path';
 import http from 'node:http';
 import crypto from 'node:crypto';
 
+import { hasBundledBinary } from '../../src/laya-native.js';
+
+/**
+ * Backend used by HTTP/CLI end-to-end tests: the bundled native binary when
+ * it has been built, the bundled wasm engine otherwise. Keeps the
+ * wire-protocol tests running on checkouts without build outputs while
+ * still covering the fast path wherever it exists.
+ */
+export const E2E_BACKEND = hasBundledBinary() ? 'native' : 'wasm';
+
+/** Skip reason for native-only tests, or false when the binary is present. */
+export const NATIVE_SKIP = hasBundledBinary()
+  ? false
+  : 'no bundled laya-serve binary (build the native backend first)';
+
 /**
  * Minimal tokenizer stub with the same call signature as a HF tokenizer:
  *   tok(text, { add_special_tokens }) -> { input_ids: { data: Int32Array } }
@@ -80,6 +95,21 @@ export function pseudoRandomBuffer(size, seed = 42) {
     out[i] = x & 0xff;
   }
   return out;
+}
+
+/**
+ * Ask the OS for a free TCP port (avoids the "random range" flakiness where
+ * a hardcoded port can collide with a live socket).
+ */
+export function getFreePort(host = '127.0.0.1') {
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer();
+    srv.once('error', reject);
+    srv.listen(0, host, () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
 }
 
 /**

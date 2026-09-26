@@ -76,17 +76,22 @@ test('fresh install: packed tarball installs and runs elsewhere', { timeout: 150
     assert.equal(help.status, 0, `--help failed: ${help.stderr}`);
     assert.match(help.stdout, /\/v1\/systemone/);
 
-    // 5) the native binary shipped with the package is usable from there
+    // 5) the native binary must ship with the package — asserted whenever the
+    // source tree has build outputs (a fresh checkout without dist/bin cannot
+    // produce them; tools/preflight-publish.js enforces this for releases).
     const plat = os.platform();
     const arch = os.arch() === 'arm64' ? ['arm64', 'x64'] : ['x64', 'arm64'];
     const exe = plat === 'win32' ? 'laya-serve.exe' : 'laya-serve';
     const candidates = arch.map((a) => path.join(
       dir, 'node_modules', 'laya-system-one', 'dist', 'bin', `${plat}-${a}`, exe
     ));
-    assert.ok(
-      candidates.some((p) => fs.existsSync(p)),
-      `native binary missing from the installed package (tried: ${candidates.join(', ')})`
-    );
+    const sourceCandidates = arch.map((a) => path.join(ROOT, 'dist', 'bin', `${plat}-${a}`, exe));
+    if (sourceCandidates.some((p) => fs.existsSync(p))) {
+      assert.ok(
+        candidates.some((p) => fs.existsSync(p)),
+        `native binary missing from the installed package (tried: ${candidates.join(', ')})`
+      );
+    }
   } finally {
     rmrf(dir);
     if (tgz && fs.existsSync(tgz)) fs.rmSync(tgz, { force: true });

@@ -145,21 +145,17 @@ export class Laya {
   }
 
   /**
-   * Load Laya model and tokenizer.
-   * @param {Object} options - { modelDir, device: 'auto' | 'webgpu' | 'wasm' | 'cpu',
-   *   backend: 'ort' (default) | 'wasm' (pure-Rust tract workers),
-   *   wasmWorkers: pool size for backend:'wasm' }
-   * Env: LAYA_BACKEND=wasm selects the wasm backend without code changes.
+   * Load the model and tokenizer.
+   * @param {Object} options
+   *   backend: 'native' (default) | 'wasm'  (or env LAYA_BACKEND)
+   *   modelDir, host, port, apiKey, threads, wasmWorkers
+   *
+   * Backends (nothing else is used, no external runtime):
+   *   'native' - the bundled self-contained laya-serve binary (Axum +
+   *              tokenizers + ONNX Runtime, statically linked). Fastest.
+   *   'wasm'   - the bundled pure-Rust tract wasm engine (browser-safe).
    */
   static async load(options = {}) {
-    // Backend selection:
-    //   'native' (default): spawn the self-contained laya-serve binary
-    //     (Axum + tokenizers + ORT) and proxy over localhost HTTP. Stable
-    //     on every runtime (Node/Bun/WSL) — JS never touches IA.
-    //   'ort': legacy in-process onnxruntime-node (fastest on Node,
-    //     unstable on Bun). Kept for compat.
-    //   'wasm': pure-Rust tract wasm (browser + fallback).
-    // Env: LAYA_BACKEND=native|ort|wasm.
     const backend = options.backend || process.env.LAYA_BACKEND || 'native';
     if (backend === 'native') {
       const { NativeServer } = await import('./laya-native.js');
@@ -173,13 +169,11 @@ export class Laya {
       await srv.start();
       return new LayaNative(srv, options);
     }
-    const engineP = (async () => {
-      const engine = await LayaEngine.load(options);
-      if (backend === 'wasm') await engine.useWasmBackend(options);
-      return engine;
-    })();
+    if (backend !== 'wasm') {
+      throw new Error(`Unknown backend '${backend}'. Use 'native' or 'wasm'.`);
+    }
     const [engine, tokenizer] = await Promise.all([
-      engineP,
+      LayaEngine.load(options),
       loadTokenizer(options.modelDir)
     ]);
     return new Laya(engine, tokenizer);
@@ -276,7 +270,7 @@ export class Laya {
     return {
       status: 'ok',
       model: 'laya-multilingual',
-      backend: this.engine?.wasm ? 'wasm' : 'ort'
+      backend: this.engine?.wasmPool ? 'wasm' : 'native'
     };
   }
 

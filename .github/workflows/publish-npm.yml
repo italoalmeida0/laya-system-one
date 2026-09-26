@@ -27,16 +27,16 @@ jobs:
     name: validate package completeness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: Restore native binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist/bin
           pattern: '*-*'
@@ -58,15 +58,15 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: Restore model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}
@@ -93,22 +93,22 @@ jobs:
     needs: [preflight, chunks]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: Restore native binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist/bin
           pattern: '*-*'
           merge-multiple: true
 
       - name: Restore model (for the manifest + tokenizer checks)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}

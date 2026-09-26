@@ -1,7 +1,7 @@
 {
   "name": "laya-system-one",
   "version": "1.1.0",
-  "description": "Self-contained System 1 decision engine: multilingual INT8 transformer served by a zero-dependency native binary (or WASM/onnxruntime fallbacks). TypeSafe Jev wire-compatible (/v1/systemone). Runs offline in Node.js, Bun and browsers.",
+  "description": "Self-contained System 1 decision engine: multilingual INT8 transformer served by a zero-dependency native binary (or the bundled pure-Rust WASM engine). TypeSafe Jev wire-compatible (/v1/systemone). Runs offline in Node.js, Bun and browsers.",
   "main": "./src/index.js",
   "module": "./src/index.js",
   "type": "module",
@@ -32,18 +32,17 @@
   "scripts": {
     "start": "node ./bin/cli.js",
     "test": "npm run test:unit && npm run test:packaging",
-    "test:unit": "node --test \"tests/unit/*.test.js\"",
-    "test:integration": "node --test \"tests/integration/*.test.js\"",
-    "test:e2e": "node --test \"tests/e2e/*.test.js\"",
-    "test:packaging": "node --test \"tests/packaging/*.test.js\"",
-    "test:install": "node --test \"tests/fresh-install/*.test.js\"",
+    "test:unit": "node ./tools/run-tests.js tests/unit",
+    "test:integration": "node ./tools/run-tests.js tests/integration",
+    "test:e2e": "node ./tools/run-tests.js tests/e2e",
+    "test:packaging": "node ./tools/run-tests.js tests/packaging",
+    "test:install": "node ./tools/run-tests.js tests/fresh-install",
     "test:all": "npm run lint && npm run test:unit && npm run test:packaging && npm run test:integration && npm run test:e2e",
     "smoke": "node ./tools/smoke.js",
     "lint": "node ./tools/lint.js",
     "compare": "node ./tools/compare.js",
     "compare:all": "node ./tools/compare-all.js",
     "bundle": "node ./tools/make-bundle.js",
-    "benchmark:gpu": "node ./tools/benchmark-gpu.js",
     "model:chunks": "node ./tools/model-chunks.js build",
     "model:assemble": "node ./tools/model-chunks.js assemble",
     "model:verify": "node ./tools/model-chunks.js verify",
@@ -51,7 +50,8 @@
     "model:acquire": "node ./tools/acquire-model.js",
     "model:test-registry": "node ./tools/model-chunks.js fetch",
     "postinstall": "node ./bin/postinstall.js",
-    "prepublishOnly": "npm run lint && npm run test:unit && npm run test:packaging"
+    "prepublishOnly": "npm run lint && npm run test:unit && npm run test:packaging",
+    "tokenizer:diff": "node ./tools/tokenizer-diff.js"
   },
   "repository": {
     "type": "git",
@@ -64,7 +64,6 @@
     "jev",
     "typesafe",
     "inference",
-    "onnx",
     "wasm",
     "native",
     "multilingual",
@@ -78,9 +77,5 @@
     "url": "https://github.com/italoalmeida0/laya-system-one/issues"
   },
   "homepage": "https://github.com/italoalmeida0/laya-system-one#readme",
-  "dependencies": {
-    "@huggingface/transformers": "^4.3.0",
-    "onnxruntime-node": "^1.21.0",
-    "onnxruntime-web": "^1.21.0"
-  }
+  "dependencies": {}
 }

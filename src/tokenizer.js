@@ -1,28 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { BpeTokenizer, makeTokenizerCallable } from './bpe-tokenizer.js';
 
-const ORT_SYMBOL = Symbol.for('onnxruntime');
-
-// WeakMap<tokenizer, Map<text, number[]>> — avoids leaking tokenizers.
+// WeakMap<tokenizer, Map<text, number[]>> - avoids leaking tokenizers.
 const _encodeCache = new WeakMap();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Bind the matching ORT symbol lazily so @huggingface/transformers finds a
-// backend: onnxruntime-node server-side (Node/Bun), onnxruntime-web in the
-// browser. Importing onnxruntime-web statically server-side would pull the
-// full WASM bundle into memory and slow startup for nothing.
-let _ortBound = false;
-async function ensureOrtSymbol() {
-  if (_ortBound || (ORT_SYMBOL in globalThis)) { _ortBound = true; return; }
-  try {
-    const isBrowser = typeof window !== 'undefined';
-    const ort = await import(isBrowser ? 'onnxruntime-web' : 'onnxruntime-node');
-    globalThis[ORT_SYMBOL] = ort.default || ort;
-  } catch { /* transformers bundles its own copy; not fatal */ }
-  _ortBound = true;
-}
 
 export const QTYPES = {
   choice: 0,
@@ -134,51 +117,16 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
 }
 
 export async function loadTokenizer(modelDir) {
-  await ensureOrtSymbol();
   const dir = modelDir || path.resolve(__dirname, '../models');
-  const isBrowser = typeof window !== 'undefined';
+  const isRemote = /^(https?|file):/.test(String(dir));
+  const src = isRemote ? String(dir).replace(/\/?$/, '/tokenizer.json') : path.join(dir, 'tokenizer.json');
 
-  if (isBrowser) {
-    // Browser has no fs: use the web build + file:// URL.
-    const req = createRequire(import.meta.url);
-    const resolved = req.resolve('@huggingface/transformers');
-    const webPath = resolved.replace(/transformers\.node\.(cjs|mjs)/, 'transformers.web.js');
-    const mod = await import(pathToFileURL(webPath).href);
-    return await mod.AutoTokenizer.from_pretrained(pathToFileURL(dir).href);
+  let json;
+  if (isRemote) {
+    json = await (await fetch(src)).json();
+  } else {
+    const fs = await import('node:fs');
+    json = JSON.parse(await fs.promises.readFile(src, 'utf8'));
   }
-
-  // Bun: web build (no fs dependency on sharp; proven working on
-  // Windows x64 + WSL2). Engine still uses onnxruntime-node natively.
-  const isBun = typeof Bun !== 'undefined';
-  if (isBun) {
-    const req = createRequire(import.meta.url);
-    const resolved = req.resolve('@huggingface/transformers');
-    const webPath = resolved.replace(/transformers\.node\.(cjs|mjs)/, 'transformers.web.js');
-    const mod = await import(pathToFileURL(webPath).href);
-    return await mod.AutoTokenizer.from_pretrained(pathToFileURL(dir).href);
-  }
-
-  // Node.js: node build + stub for the optional 'sharp' dependency
-  // (images/audio only — never used for tokenizers). Sharp's native
-  // binding may be missing/broken on some platforms (e.g. WSL2 ARM64
-  // without libvips); redirect its resolution to a no-op stub.
-  try {
-    const M = await import('node:module').then(m => m.default || m);
-    const origResolve = M._resolveFilename;
-    let needStub = false;
-    try {
-      const req = createRequire(import.meta.url);
-      req('sharp');
-    } catch {
-      needStub = true;
-    }
-    if (needStub) {
-      M._resolveFilename = function (request, ...rest) {
-        if (request === 'sharp') return path.join(__dirname, '_sharp_stub.cjs');
-        return origResolve.call(this, request, ...rest);
-      };
-    }
-  } catch { /* best-effort; import below will surface real errors */ }
-  const mod = await import('@huggingface/transformers');
-  return await mod.AutoTokenizer.from_pretrained(dir, { local_files_only: true });
+  return makeTokenizerCallable(new BpeTokenizer(json));
 }

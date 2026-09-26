@@ -397,12 +397,13 @@ export async function resolveModel(options = {}) {
   }
 
   // 6) GitHub Releases asset (legacy path) — tries every declared URL.
-  const urls = [
+  // Deduplicated: a failed source must not be retried under an alias.
+  const urls = [...new Set([
     process.env.LAYA_MODEL_URL,
     manifest?.sources?.github,
     manifest?.sources?.githubLegacy,
     DEFAULT_GITHUB_URL
-  ].filter(Boolean);
+  ].filter(Boolean))];
 
   let lastErr;
   for (const url of urls) {
@@ -492,7 +493,15 @@ export async function downloadToFile(url, targetPath, { manifest = null, quiet =
         signal: AbortSignal.timeout(600000),
         headers: { 'user-agent': 'laya-system-one-model-resolver' }
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        // 4xx will not improve on retry (404 = asset not published yet);
+        // bail out immediately so the next source in the chain is tried.
+        const err = new Error(`HTTP ${res.status} ${res.statusText}`);
+        if (res.status < 500 && res.status !== 429 && res.status !== 408) {
+          throw Object.assign(err, { fatal: true });
+        }
+        throw err;
+      }
 
       const total = parseInt(res.headers.get('content-length') || `${manifest?.bytes || 0}`, 10);
       let loaded = 0;
@@ -532,6 +541,10 @@ export async function downloadToFile(url, targetPath, { manifest = null, quiet =
       }
       return { path: targetPath, bytes: loaded, sha256 };
     } catch (err) {
+      if (err && err.fatal) {
+        await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+        throw err;
+      }
       lastErr = err;
       if (attempt < retries) {
         const backoff = 1000 * 2 ** attempt;

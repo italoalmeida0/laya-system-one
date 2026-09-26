@@ -31,15 +31,13 @@ Usage:
 Options:
   --port <number>       HTTP port to bind (default: 8080 or PORT env)
   --host <string>       Host to bind (default: 0.0.0.0 or HOST env)
-  --backend <type>      Inference backend: native | ort | wasm (default: native)
-  --device <type>       ort device hint: auto | cpu (default: auto)
+  --backend <type>      Inference backend: native | wasm (default: native)
   --api-key <string>    Require Bearer token authentication (optional)
   --help, -h            Show this help message
   --version, -v         Print the package version
 
 Backends:
   native   self-contained laya-serve binary (fastest, zero dependencies)
-  ort      onnxruntime Node bindings (cross-platform fallback)
   wasm     pure-Rust tract wasm (browser / extreme portability)
 
 Endpoints:
@@ -63,7 +61,6 @@ if (args.includes('--version') || args.includes('-v')) {
 const port = parseInt(getArg('--port', process.env.PORT || '8080'), 10);
 const host = getArg('--host', process.env.HOST || '0.0.0.0');
 const backend = getArg('--backend', process.env.LAYA_BACKEND || 'native');
-const device = getArg('--device', process.env.DEVICE || 'auto');
 const apiKey = getArg('--api-key', process.env.LAYA_API_KEY || process.env.API_KEY || null);
 
 console.log('='.repeat(68));
@@ -92,7 +89,7 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 try {
-  srv = await serve({ host, port, device, backend, apiKey });
+  srv = await serve({ host, port, backend, apiKey });
   console.log(`✓ Laya System-One server active and ready!`);
   console.log(`✓ Jev Evaluation Endpoint : ${srv.url}/v1/systemone`);
   console.log(`✓ Healthcheck Endpoint   : ${srv.url}/health`);

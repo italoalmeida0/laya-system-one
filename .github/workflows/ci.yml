@@ -22,16 +22,16 @@ jobs:
     name: lint & hygiene
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
       - run: npm run lint
 
   # ------------------------------------------------------------------
-  # unit tests + packaging on every OS/Node combination we support
+  # unit tests + packaging across the runtimes and OSes we support
   # ------------------------------------------------------------------
   unit:
     name: unit (node ${{ matrix.node }} / ${{ matrix.os }})
@@ -39,40 +39,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [18.x, 20.x, 22.x]
+        include:
+          - { os: ubuntu-latest, node: 18.x }
+          - { os: ubuntu-latest, node: 20.x }
+          - { os: ubuntu-latest, node: 22.x }
+          - { os: ubuntu-latest, node: 24.x }
+          - { os: windows-latest, node: 22.x }
+          - { os: macos-latest, node: 22.x }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
       - run: npm run test:unit
       - run: npm run test:packaging
 
   # ------------------------------------------------------------------
-  # real-model tests: the model is cached between runs, then the whole
-  # engine stack is exercised (determinism, backends, wire protocol, CLI)
+  # the real thing: build the native binary, fetch the model and run the
+  # whole engine stack (native + ort, wire protocol, CLI, fresh install)
   # ------------------------------------------------------------------
-  integration:
-    name: integration & e2e (real model)
+  verify:
+    name: full stack (native binary + real model)
     needs: lint
     runs-on: ubuntu-latest
     env:
       LAYA_REQUIRE_MODEL: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/laya-serve
+
+      - name: Build laya-serve (linux-x64)
+        run: cargo build --release --target x86_64-unknown-linux-gnu --manifest-path native/laya-serve/Cargo.toml
+
+      - name: Stage binary
+        run: |
+          mkdir -p dist/bin/linux-x64
+          cp native/laya-serve/target/x86_64-unknown-linux-gnu/release/laya-serve dist/bin/linux-x64/laya-serve
+          chmod +x dist/bin/linux-x64/laya-serve
+
+      - run: npm ci
 
       - name: Restore model cache
-        id: model-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}
@@ -82,6 +103,8 @@ jobs:
 
       - run: npm run test:integration
       - run: npm run test:e2e
+      - run: npm run test:packaging
+      - run: npm run test:install
 
   # ------------------------------------------------------------------
   # the model-over-npm pipeline: split -> chunk packages -> reassemble
@@ -93,17 +116,16 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LAYA_REQUIRE_MODEL: '1'
-      LAYA_SKIP_MODEL_DIST: ''
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: Restore model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}
@@ -121,35 +143,11 @@ jobs:
         run: npm run model:verify -- --model "$RUNNER_TEMP/model.from-chunks.onnx"
 
       - name: Chunk pipeline tests (real model)
-        run: node --test tests/integration/model-distribution.test.js
+        run: node ./tools/run-tests.js tests/integration/model-distribution.test.js
 
       - name: Upload chunk packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: model-chunks
           path: dist/model-chunks/
-          retention-days: 7
-
-  # ------------------------------------------------------------------
-  # "does it work for someone else": pack, install into a clean project
-  # ------------------------------------------------------------------
-  package:
-    name: package & fresh install
-    needs: lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run test:packaging
-      - run: npm run test:install
-
-      - name: Upload packed tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-package
-          path: '*.tgz'
           retention-days: 7

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Laya } from '../../src/agent.js';
 import { serve } from '../../src/server.js';
-import { request } from '../helpers/index.js';
+import { request, E2E_BACKEND, NATIVE_SKIP } from '../helpers/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MODEL_DIR = path.join(ROOT, 'models');
@@ -58,7 +58,7 @@ const post = (url, body, headers = {}) => request(url, '/v1/systemone', {
 });
 
 test('GET /health answers with the TypeSafe Jev protocol marker', { skip }, async () => {
-  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: 'native' });
+  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const res = await request(srv.url, '/health');
     assert.equal(res.status, 200);
@@ -71,7 +71,7 @@ test('GET /health answers with the TypeSafe Jev protocol marker', { skip }, asyn
 });
 
 test('POST /v1/systemone returns a schema-compliant evaluation', { skip }, async () => {
-  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: 'native' });
+  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const res = await post(srv.url, VALID_BODY);
     assert.equal(res.status, 200);
@@ -113,7 +113,7 @@ test('POST /v1/systemone returns a schema-compliant evaluation', { skip }, async
 });
 
 test('billing complaints are routed to billing (pt/en/es)', { skip }, async () => {
-  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: 'native' });
+  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const prompts = {
       en: 'I was charged twice on my invoice and would like a refund.',
@@ -136,7 +136,7 @@ test('billing complaints are routed to billing (pt/en/es)', { skip }, async () =
 test('api-key enforcement over the wire', { skip }, async () => {
   const srv = await serve({
     host: '127.0.0.1', port: 0, modelDir: MODEL_DIR,
-    backend: 'native', apiKey: 'test-secret'
+    backend: E2E_BACKEND, apiKey: 'test-secret'
   });
   try {
     assert.equal((await post(srv.url, VALID_BODY)).status, 401);
@@ -148,7 +148,7 @@ test('api-key enforcement over the wire', { skip }, async () => {
 });
 
 test('malformed payloads are rejected with 422', { skip }, async () => {
-  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: 'native' });
+  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const bad = await post(srv.url, '{"state": "test", "questions": {}}');
     assert.equal(bad.status, 200, 'empty questions is valid');
@@ -163,7 +163,7 @@ test('malformed payloads are rejected with 422', { skip }, async () => {
 });
 
 test('unknown endpoints return 404', { skip }, async () => {
-  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: 'native' });
+  const srv = await serve({ host: '127.0.0.1', port: 0, modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const res = await request(srv.url, '/nope');
     assert.equal(res.status, 404);
@@ -174,7 +174,7 @@ test('unknown endpoints return 404', { skip }, async () => {
 });
 
 test('the engine can be reused across many evaluations', { skip }, async () => {
-  const laya = await Laya.load({ modelDir: MODEL_DIR, backend: 'native' });
+  const laya = await Laya.load({ modelDir: MODEL_DIR, backend: E2E_BACKEND });
   try {
     const srv = await serve({ host: '127.0.0.1', port: 0, laya, warmup: false });
     try {

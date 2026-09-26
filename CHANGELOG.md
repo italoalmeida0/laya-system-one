@@ -4,6 +4,34 @@ All notable changes to `laya-system-one` are documented here.
 
 ## [1.1.0] — 2026-09-26
 
+### Removed: all external runtime dependencies
+
+The package now ships everything it needs and downloads nothing but the
+model. `dependencies` is empty.
+
+- **`onnxruntime-node` / `onnxruntime-web` are gone.** The only backends are
+  the bundled self-contained `laya-serve` binary (`native`, default) and the
+  bundled pure-Rust `tract` wasm engine (`wasm`). The `ort` backend was
+  removed from the API/CLI (`--backend native|wasm`).
+- **`@huggingface/transformers` is gone.** Tokenization is now a pure-JS BPE
+  implementation (`src/bpe-tokenizer.js`) that reproduces the
+  `tokenizer.json` pipeline exactly: the `Replace` normalizer, the
+  `Metaspace` pre-tokenizer (`prepend_scheme: always`), the added-vocabulary
+  pass (including the whitespace-run tokens and `<mask>`'s `lstrip`) and the
+  580k-merge BPE model with byte fallback and `fuse_unk`.
+  - Verified **token-for-token** against the reference `tokenizers` crate
+    binding — the same version the native binary links — over a 95-case
+    corpus (`tests/fixtures/tokenizer-golden.json`,
+    `npm run tokenizer:diff`). Both backends therefore see identical input
+    ids, which is what makes them agree on answers.
+  - `src/_sharp_stub.cjs` (a shim for `transformers`' optional `sharp`
+    dependency) was deleted with it.
+
+### Changed
+- `Laya.load()` documents and enforces the two backends; an unknown
+  `backend` is now a clear error instead of silently falling through.
+- Install is much lighter: no postinstall binary downloads, no ORT/transformers.
+
 Release focus: **deterministic installs, honest docs, and a test suite that
 actually exercises the system.** The wire protocol is unchanged.
 

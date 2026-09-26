@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { sha256File, assembleChunks, findChunksOnDisk, readManifest } from '../../src/model-resolver.js';
 import { Laya } from '../../src/agent.js';
-import { makeTempDir, rmrf } from '../helpers/index.js';
+import { makeTempDir, rmrf, NATIVE_SKIP } from '../helpers/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MODEL = path.join(ROOT, 'models', 'model.onnx');
@@ -79,19 +79,22 @@ test('real model is split into chunk packages and reassembled byte-identically',
       await fs.promises.copyFile(path.join(ROOT, 'models', f), path.join(modelDir, f));
     }
 
-    // ...and it must be functional, not just byte-identical
-    const laya = await Laya.load({ modelDir, backend: 'native' });
-    try {
-      const res = await laya.predict('I was charged twice on my invoice and need a refund.', {
-        department: {
-          type: 'choice',
-          instructions: 'Which department?',
-          criteria: { billing: 'refunds', tech: 'bugs' }
-        }
-      });
-      assert.equal(res.answers.department.choice, 'billing');
-    } finally {
-      await laya.close();
+    // ...and it must be functional, not just byte-identical. ort runs
+    // everywhere; the native binary is exercised too when it is built.
+    for (const backend of NATIVE_SKIP ? ['wasm'] : ['wasm', 'native']) {
+      const laya = await Laya.load({ modelDir, backend });
+      try {
+        const res = await laya.predict('I was charged twice on my invoice and need a refund.', {
+          department: {
+            type: 'choice',
+            instructions: 'Which department?',
+            criteria: { billing: 'refunds', tech: 'bugs' }
+          }
+        });
+        assert.equal(res.answers.department.choice, 'billing', `reassembled model misbehaves on backend=${backend}`);
+      } finally {
+        await laya.close();
+      }
     }
   } finally {
     rmrf(tmp);

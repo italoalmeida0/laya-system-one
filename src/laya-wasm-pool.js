@@ -130,15 +130,11 @@ export class WasmPool {
 }
 
 function defaultPoolSize() {
-  // wasm is single-threaded per instance; 4 workers saturate ~4 cores
-  // while keeping memory sane (each holds the 309MB weights... actually
-  // weights live per-worker wasm memory — size 2-4 is the sweet spot).
-  // Overridable via LAYA_WASM_WORKERS.
+  // Each worker keeps its own copy of the ~309 MB weights in wasm memory, so
+  // the pool size multiplies the footprint. The wasm engine is the
+  // portability fallback (the fast path is the native binary), so one worker
+  // is the sane default; raise it with LAYA_WASM_WORKERS for throughput.
   const env = parseInt(process.env.LAYA_WASM_WORKERS || '', 10);
   if (Number.isFinite(env) && env > 0) return Math.min(env, 8);
-  try {
-    return Math.min(4, Math.max(2, os.cpus().length >= 8 ? 4 : 2));
-  } catch {
-    return 2;
-  }
+  return 1;
 }

@@ -20,12 +20,12 @@ jobs:
     name: gate (lint + unit + packaging)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
       - run: npm run lint
       - run: npm run test:unit
       - run: npm run test:packaging
@@ -38,15 +38,15 @@ jobs:
     name: build model chunk packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
+      - run: npm ci
 
       - name: Restore model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}
@@ -64,19 +64,25 @@ jobs:
 
       - name: Pack chunk packages
         run: |
-          mkdir -p "$RUNNER_TEMP/chunk-tarballs"
+          mkdir -p chunk-tarballs
           for d in dist/model-chunks/laya-system-one-model-chunk-*; do
-            (cd "$d" && npm pack --pack-destination "$RUNNER_TEMP/chunk-tarballs")
+            (cd "$d" && npm pack --pack-destination "$GITHUB_WORKSPACE/chunk-tarballs")
           done
-          cp models/model.manifest.json "$RUNNER_TEMP/chunk-tarballs/"
+          cp models/model.manifest.json chunk-tarballs/
 
-      - name: Upload model asset + chunk tarballs
-        uses: actions/upload-artifact@v4
+      - name: Upload model asset
+        uses: actions/upload-artifact@v7
         with:
-          name: model-assets
-          path: |
-            models/model.onnx
-            ${{ runner.temp }}/chunk-tarballs/
+          name: model-asset
+          path: models/model.onnx
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload chunk tarballs
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-chunks
+          path: chunk-tarballs/
           retention-days: 14
 
   release:
@@ -84,41 +90,49 @@ jobs:
     needs: [test, binaries, model]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist/bin
-          pattern: '*-*'
-          merge-multiple: true
+      - name: Download & stage native binaries
+        uses: ./.github/actions/stage-binaries
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
-          name: model-assets
+          name: model-asset
           path: release-assets
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: model-chunks
+          path: release-assets/chunks
 
       - name: Assemble release assets
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release-assets/bin
-          cp -r dist/bin/* release-assets/bin/
-          ls -laR release-assets | head -50
+          cp -r dist/bin/. release-assets/bin/
+          echo '--- release assets ---'
+          find release-assets -type f | sort
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release-assets/model.onnx
             release-assets/bin/**
-            release-assets/*.tgz
+            release-assets/chunks/*.tgz
+            release-assets/chunks/model.manifest.json
           body: |
             ## Laya System-One ${{ github.ref_name }}
 
-            - `model.onnx` — INT8 checkpoint (sha256 in `model.manifest.json`)
-            - `bin/<platform>/laya-serve` — native binaries
-            - `laya-system-one-model-chunk-*.tgz` — the model split for npm
-            - `model.manifest.json` — checksums and chunk metadata
+            | asset | what it is |
+            |---|---|
+            | `model.onnx` | INT8 checkpoint (~324 MB) |
+            | `model.manifest.json` | sha256 of the model and of every chunk |
+            | `bin/<platform>/laya-serve` | native binaries (5 targets) |
+            | `laya-system-one-model-chunk-*.tgz` | the model split for npm |
 
-            Verify: `npm run model:verify` against `model.manifest.json`.
+            Verify the download with `npm run model:verify`.

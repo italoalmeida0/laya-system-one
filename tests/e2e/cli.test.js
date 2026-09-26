@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { request } from '../helpers/index.js';
+import { request, E2E_BACKEND, getFreePort } from '../helpers/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CLI = path.join(ROOT, 'bin', 'cli.js');
@@ -48,8 +48,8 @@ test('cli --help documents the real backends and endpoints', async () => {
 });
 
 test('cli starts, serves requests and shuts down cleanly on SIGTERM', { skip }, async () => {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const child = spawn(process.execPath, [CLI, '--port', String(port), '--host', '127.0.0.1'], {
+  const port = await getFreePort();
+  const child = spawn(process.execPath, [CLI, '--port', String(port), '--host', '127.0.0.1', '--backend', E2E_BACKEND], {
     cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe']
   });
 

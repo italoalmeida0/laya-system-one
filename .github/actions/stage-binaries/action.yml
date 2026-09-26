@@ -1,0 +1,47 @@
+name: 'Download & stage native binaries'
+description: >
+  Downloads the bin-* artifacts produced by build-binaries.yml and places
+  each laya-serve binary in dist/bin/<platform>/. The artifact's internal
+  layout is irrelevant on purpose: this step finds the binary and re-homes
+  it, so a change in upload-artifact's path behaviour cannot break releases.
+
+inputs:
+  stage-dir:
+    description: 'Where the raw artifacts are downloaded'
+    required: false
+    default: 'stage'
+
+runs:
+  using: composite
+  steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: 'bin-*'
+        path: ${{ inputs.stage-dir }}
+        merge-multiple: true
+
+    - name: Lay out dist/bin/<platform>/
+      shell: bash
+      run: |
+        set -euo pipefail
+        STAGE='${{ inputs.stage-dir }}'
+        mkdir -p dist/bin
+        failed=0
+        for plat in win32-x64 win32-arm64 linux-x64 linux-arm64 darwin-arm64; do
+          exe=laya-serve
+          case "$plat" in win32-*) exe=laya-serve.exe ;; esac
+          mkdir -p "dist/bin/$plat"
+          found=$(find "$STAGE" -type f \( -name 'laya-serve' -o -name 'laya-serve.exe' \) -path "*$plat*" | head -1)
+          if [ -z "$found" ]; then
+            echo "::error::no binary found for $plat (searched $STAGE)"
+            failed=1
+            continue
+          fi
+          cp "$found" "dist/bin/$plat/$exe"
+          chmod +x "dist/bin/$plat/$exe" 2>/dev/null || true
+          echo "staged $plat <- $found"
+        done
+        echo '--- dist/bin ---'
+        find dist/bin -type f | sort
+        [ "$failed" -eq 0 ]

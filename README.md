@@ -47,15 +47,16 @@ A single ONNX checkpoint (`model.onnx`, ~324 MB, INT8) trained to score answer o
 2. runs one forward pass,
 3. turns the logits into calibrated probabilities.
 
-The runtime is JavaScript (Node/Bun/browser) and can execute that forward pass in three ways — pick one with `--backend` or `LAYA_BACKEND`:
+The runtime is JavaScript (Node/Bun/browser) and executes that forward pass in exactly two ways — pick one with `--backend` or `LAYA_BACKEND`:
 
 | backend | what it is | when to use |
 |---|---|---|
 | `native` **(default)** | the `laya-serve` binary bundled in the package (Rust: Axum + tokenizers + ONNX Runtime, statically linked) | fastest path, zero system dependencies, any OS |
-| `ort` | `onnxruntime-node` / `onnxruntime-web` from JS | fallback, or when you want to drive ORT yourself |
-| `wasm` | pure-Rust `tract` compiled to WASM | browsers and extreme portability |
+| `wasm` | pure-Rust `tract` compiled to WASM, bundled in the package | browsers and extreme portability |
 
-> **Note on WebGPU:** earlier versions advertised WebGPU acceleration. Measured reality: ONNX Runtime's Node WebGPU execution provider falls back to CPU per-op with large overhead — it is consistently *slower* than the native backend. It is not used server-side.
+There are **no external runtime dependencies**: no `onnxruntime-*`, no `@huggingface/transformers`, nothing to download besides the model. The tokenizer itself is a pure-JS BPE implementation (`src/bpe-tokenizer.js`) verified token-for-token against the reference `tokenizers` crate that the native binary links — so both backends see exactly the same input ids.
+
+> **Note on WebGPU:** earlier versions advertised WebGPU acceleration. Measured reality: ONNX Runtime's Node WebGPU execution provider falls back to CPU per-op with large overhead — it is consistently *slower* than the native backend. WebGPU is not used server-side.
 
 ---
 
@@ -91,9 +92,8 @@ LAYA_MODEL_CHUNKS_DIR=/opt/models/chunks
 
 | option | default | description |
 |---|---|---|
-| `backend` | `'native'` | `native` \| `ort` \| `wasm` (or env `LAYA_BACKEND`) |
+| `backend` | `'native'` | `native` \| `wasm` (or env `LAYA_BACKEND`) |
 | `modelDir` | `<package>/models` | where `model.onnx` and `tokenizer.json` live |
-| `device` | `'auto'` | ort device hint (`auto` \| `cpu`) |
 | `apiKey` | `null` | Bearer token required by the HTTP layer |
 | `port` / `host` | `0` / `127.0.0.1` | where the native server binds |
 
@@ -139,8 +139,7 @@ npx laya-system-one --port 8080 --backend native
 ```
 --port <number>     HTTP port (default 8080, or PORT env)
 --host <string>     bind address (default 0.0.0.0, or HOST env)
---backend <type>    native | ort | wasm (default native)
---device <type>     ort device hint: auto | cpu
+--backend <type>    native | wasm (default native)
 --api-key <string>  require Bearer token auth
 --help / --version
 ```
@@ -151,7 +150,7 @@ npx laya-system-one --port 8080 --backend native
 
 | variable | effect |
 |---|---|
-| `LAYA_BACKEND` | `native` \| `ort` \| `wasm` |
+| `LAYA_BACKEND` | `native` \| `wasm` |
 | `LAYA_MODEL_PATH` | explicit `model.onnx` (file or directory) |
 | `LAYA_MODEL_CHUNKS_DIR` | directory with chunk files / chunk packages |
 | `LAYA_MODEL_URL` | override the download URL of the model asset |
@@ -165,7 +164,7 @@ npx laya-system-one --port 8080 --backend native
 
 ## Performance
 
-Measured on a 4-core ARM64 cloud VM with the bundled `laya-serve` binary (the default backend). Your numbers will differ; run `npm run benchmark:gpu` / `npm run compare:all` to measure your own hardware.
+Measured on a 4-core ARM64 cloud VM with the bundled `laya-serve` binary (the default backend). Your numbers will differ; run `npm run compare:all` to measure your own hardware.
 
 | runtime | cold start | per request |
 |---|---|---|
@@ -187,7 +186,7 @@ Measured on a 4-core ARM64 cloud VM with the bundled `laya-serve` binary (the de
 
 | | |
 |---|---|
-| **Node.js** | ≥ 18.17 |
+| **Node.js** | ≥ 18.17 (zero runtime dependencies) |
 | **Bun** | ≥ 1.0 (fully supported) |
 | **Browsers** | WASM backend (no install required) |
 | **OS** | Linux (glibc + musl/Alpine), macOS (arm64), Windows (x64 + arm64) |
@@ -219,6 +218,7 @@ npm run test:e2e         # HTTP protocol + CLI + lifecycle
 npm run test:install     # pack + install into a clean dir + run
 npm run smoke            # one-shot human-readable verification
 npm run lint             # syntax + packaging + docs consistency gate
+npm run tokenizer:diff   # prove the JS tokenizer == the native binary's
 ```
 
 The model-distribution pipeline (the reason the 324 MB asset can live on npm):
