@@ -99,15 +99,14 @@ export class WasmPool {
   }
 
   /** Run one inference on the next free worker (waits if all busy). */
-  async infer({ ids, markers, qtype }) {
+  async infer({ ids, attn, markers, markerMask, qtype }) {
     await this.ready();
     const w = await this._acquire();
-    const id = this.nextId++;
     return new Promise((resolve, reject) => {
+      const id = this.nextId++;
       this.pending.set(id, { resolve, reject, worker: w });
-      w.busy = true;
-      w.postMessage({ type: 'infer', id, ids, markers, q: qtype });
-    });
+      w.postMessage({ type: 'infer', id, ids, attn, markers, markerMask, q: qtype });
+    }).finally(() => { w.busy = false; });
   }
 
   async _acquire() {

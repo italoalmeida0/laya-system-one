@@ -156,7 +156,9 @@ impl LayaModel {
         &self,
         input_ids: &[i64],
         seq_len: usize,
+        attention_mask: &[i64],
         marker_pos: &[i64],
+        marker_mask: &[bool],
         qtype: i64,
     ) -> TractResult<Vec<f32>> {
         let num_markers = marker_pos.len();
@@ -167,15 +169,26 @@ impl LayaModel {
             input_ids.to_vec(),
         )?
         .into();
-        let attn_t: Tensor =
-            tract_ndarray::Array2::from_elem((1, s), 1i64).into();
+        // attention_mask / marker_mask come from the caller: padding must be
+        // masked out (0 / false) so a padded shape gives the same answer as
+        // the unpadded one. That is what lets the wasm backend reuse ONE
+        // specialized plan instead of one per input length (each plan holds
+        // its own copy of the weights, and wasm32 dies past ~4 GB).
+        let attn_t: Tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, s),
+            attention_mask.to_vec(),
+        )?
+        .into();
         let marker_pos_t: Tensor = tract_ndarray::Array2::from_shape_vec(
             (1, num_markers),
             marker_pos.to_vec(),
         )?
         .into();
-        let marker_mask_t: Tensor =
-            tract_ndarray::Array2::from_elem((1, num_markers), true).into();
+        let marker_mask_t: Tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, num_markers),
+            marker_mask.to_vec(),
+        )?
+        .into();
         let qtype_t: Tensor =
             tract_ndarray::Array1::from_vec(vec![qtype]).into();
 
@@ -227,11 +240,13 @@ pub fn infer(
     id: usize,
     input_ids: &[i64],
     seq_len: usize,
+    attention_mask: &[i64],
     marker_pos: &[i64],
+    marker_mask: &[bool],
     qtype: i64,
 ) -> Result<Vec<f32>, String> {
     with_model(id, |m| {
-        m.infer(input_ids, seq_len, marker_pos, qtype)
+        m.infer(input_ids, seq_len, attention_mask, marker_pos, marker_mask, qtype)
             .map_err(|e| format!("tract infer: {e:?}"))
     })?
 }
@@ -283,7 +298,10 @@ pub extern "C" fn laya_infer(
     let input_ids = unsafe { std::slice::from_raw_parts(input_ids_ptr, seq_len) };
     let marker_pos =
         unsafe { std::slice::from_raw_parts(marker_pos_ptr, num_markers) };
-    match infer(id, input_ids, seq_len, marker_pos, qtype) {
+    // The stable C ABI has no mask parameters: unpadded inputs only.
+    let attention_mask = vec![1i64; seq_len];
+    let marker_mask = vec![true; num_markers];
+    match infer(id, input_ids, seq_len, &attention_mask, marker_pos, &marker_mask, qtype) {
         Ok(logits) => {
             let n = logits.len().min(logits_cap);
             unsafe { std::ptr::copy_nonoverlapping(logits.as_ptr(), logits_out, n) };
@@ -341,18 +359,25 @@ mod wasm_api {
             Ok(LayaWasm { inner })
         }
 
-        /// Run one inference. `input_ids`: i64 array as BigInt64Array or
-        /// number[]; `marker_pos`: number[]; returns Float32Array logits.
+        /// Run one inference.
+        ///   input_ids      i64[]   (padded)
+        ///   attention_mask i64[]   (0 on padding - keeps padded == unpadded)
+        ///   marker_pos     i64[]   (0 on padding)
+        ///   marker_mask    u8[]    (0/1 - wasm-bindgen has no &[bool])
+        /// Returns Float32Array logits (one per real marker).
         #[wasm_bindgen]
         pub fn infer(
             &self,
             input_ids: &[i64],
+            attention_mask: &[i64],
             marker_pos: &[i64],
+            marker_mask: &[u8],
             qtype: i64,
         ) -> Result<Vec<f32>, JsValue> {
             let s = input_ids.len();
+            let mm: Vec<bool> = marker_mask.iter().map(|v| *v != 0).collect();
             self.inner
-                .infer(input_ids, s, marker_pos, qtype)
+                .infer(input_ids, s, attention_mask, marker_pos, &mm, qtype)
                 .map_err(|e| JsValue::from_str(&format!("{e:?}")))
         }
 
@@ -389,8 +414,19 @@ mod napi_bridge {
         qtype: i64,
     ) -> Result<Vec<f64>> {
         let seq_len = input_ids.len();
-        infer(id as usize, &input_ids, seq_len, &marker_pos, qtype)
-            .map(|v| v.into_iter().map(|x| x as f64).collect())
-            .map_err(|e| Error::from_reason(e))
+        // napi keeps the unpadded call shape: no masks, no padding.
+        let attention_mask = vec![1i64; seq_len];
+        let marker_mask = vec![true; marker_pos.len()];
+        infer(
+            id as usize,
+            &input_ids,
+            seq_len,
+            &attention_mask,
+            &marker_pos,
+            &marker_mask,
+            qtype,
+        )
+        .map(|v| v.into_iter().map(|x| x as f64).collect())
+        .map_err(|e| Error::from_reason(e))
     }
 }

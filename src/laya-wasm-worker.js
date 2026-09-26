@@ -4,7 +4,7 @@
  * Each worker owns ONE LayaWasm instance (its own tract runnables).
  * Protocol (parent <-> worker via postMessage):
  *   parent -> { type: 'load', modelPath }            => { type: 'loaded', ms }
- *   parent -> { type: 'infer', id, ids, markers, q } => { type: 'result', id, logits, ms }
+ *   parent -> { type: 'infer', id, ids, attn, markers, markerMask, q }
  *                                                      | { type: 'error', id, message }
  *
  * Works in Node.js (worker_threads) and Bun (Worker). The model bytes are
@@ -25,7 +25,7 @@ parentPort.on('message', async (msg) => {
     } else if (msg.type === 'infer') {
       if (!model) throw new Error('model not loaded');
       const t0 = performance.now();
-      const logits = model.infer(msg.ids, msg.markers, msg.q);
+      const logits = model.infer(msg.ids, msg.attn, msg.markers, msg.markerMask, msg.q);
       parentPort.postMessage({
         type: 'result',
         id: msg.id,

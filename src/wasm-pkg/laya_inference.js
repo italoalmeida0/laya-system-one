@@ -30,25 +30,35 @@ export class LayaWasm {
         return ret >>> 0;
     }
     /**
-     * Run one inference. `input_ids`: i64 array as BigInt64Array or
-     * number[]; `marker_pos`: number[]; returns Float32Array logits.
+     * Run one inference.
+     *   input_ids      i64[]   (padded)
+     *   attention_mask i64[]   (0 on padding - keeps padded == unpadded)
+     *   marker_pos     i64[]   (0 on padding)
+     *   marker_mask    u8[]    (0/1 - wasm-bindgen has no &[bool])
+     * Returns Float32Array logits (one per real marker).
      * @param {BigInt64Array} input_ids
+     * @param {BigInt64Array} attention_mask
      * @param {BigInt64Array} marker_pos
+     * @param {Uint8Array} marker_mask
      * @param {bigint} qtype
      * @returns {Float32Array}
      */
-    infer(input_ids, marker_pos, qtype) {
+    infer(input_ids, attention_mask, marker_pos, marker_mask, qtype) {
         const ptr0 = passArray64ToWasm0(input_ids, wasm.__wbindgen_malloc_command_export);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passArray64ToWasm0(marker_pos, wasm.__wbindgen_malloc_command_export);
+        const ptr1 = passArray64ToWasm0(attention_mask, wasm.__wbindgen_malloc_command_export);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.layawasm_infer(this.__wbg_ptr, ptr0, len0, ptr1, len1, qtype);
+        const ptr2 = passArray64ToWasm0(marker_pos, wasm.__wbindgen_malloc_command_export);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(marker_mask, wasm.__wbindgen_malloc_command_export);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.layawasm_infer(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, qtype);
         if (ret[3]) {
             throw takeFromExternrefTable0(ret[2]);
         }
-        var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        var v5 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free_command_export(ret[0], ret[1] * 4, 4);
-        return v3;
+        return v5;
     }
     /**
      * Parse + optimize ONNX bytes. Heavy (~seconds); call once.

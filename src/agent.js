@@ -220,12 +220,19 @@ export class Laya {
         ins = JSON.stringify(ins);
       }
 
+      // Choice criteria are canonicalized by sorting their keys: the native
+      // backend iterates a BTreeMap (sorted) while JS objects keep insertion
+      // order, so without this the two backends would place the options at
+      // different marker positions and answer differently. Sorting also makes
+      // the answer independent of the key order the client happened to send.
       const internalQ = {
         t: qtype,
         ins,
         crit: qtype === 'choice' && Array.isArray(crit)
-          ? Object.fromEntries(crit.map(c => [c, null]))
-          : (crit || {})
+          ? Object.fromEntries(crit.map(c => [c, null]).sort())
+          : (qtype === 'choice' && crit && typeof crit === 'object' && !Array.isArray(crit))
+            ? Object.fromEntries(Object.entries(crit).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+            : (crit || {})
       };
 
       const { ids, markers } = buildSequence(

@@ -1,5 +1,9 @@
 name: CI
 
+# Every platform, architecture and libc we support, plus Bun. The bundled
+# native binary is the PRIMARY inference path, so the full-stack jobs build
+# it and the tests FAIL if it is missing (a silent wasm fallback would hide
+# a broken install - wasm is the browser/edge safety net only).
 on:
   push:
     branches: [main]
@@ -16,7 +20,7 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # fast, offline gate: syntax, packaging metadata and docs consistency
+  # fast, offline gate: syntax, packaging metadata, docs consistency
   # ------------------------------------------------------------------
   lint:
     name: lint & hygiene
@@ -24,71 +28,100 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
+        with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npm run lint
 
   # ------------------------------------------------------------------
-  # unit tests + packaging across the runtimes and OSes we support
+  # unit + packaging on every OS / architecture / runtime
   # ------------------------------------------------------------------
   unit:
-    name: unit (node ${{ matrix.node }} / ${{ matrix.os }})
+    name: unit (${{ matrix.name }})
     needs: lint
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, node: 18.x }
-          - { os: ubuntu-latest, node: 20.x }
-          - { os: ubuntu-latest, node: 22.x }
-          - { os: ubuntu-latest, node: 24.x }
-          - { os: windows-latest, node: 22.x }
-          - { os: macos-latest, node: 22.x }
+          - { name: 'linux-x64 node18',  os: ubuntu-latest,     node: 18.x }
+          - { name: 'linux-x64 node20',  os: ubuntu-latest,     node: 20.x }
+          - { name: 'linux-x64 node22',  os: ubuntu-latest,     node: 22.x }
+          - { name: 'linux-x64 node24',  os: ubuntu-latest,     node: 24.x }
+          - { name: 'linux-arm64 node22', os: ubuntu-24.04-arm, node: 22.x }
+          - { name: 'win-x64 node22',    os: windows-latest,    node: 22.x }
+          - { name: 'win-arm64 node22',  os: windows-11-arm,    node: 22.x }
+          - { name: 'mac-arm64 node22',  os: macos-latest,      node: 22.x }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
+        with: { node-version: '${{ matrix.node }}', cache: npm }
       - run: npm ci
       - run: npm run test:unit
       - run: npm run test:packaging
 
   # ------------------------------------------------------------------
-  # the real thing: build the native binary, fetch the model and run the
-  # whole engine stack (native + ort, wire protocol, CLI, fresh install)
+  # musl (Alpine) - the other libc. No native binary is built here (the
+  # musl bundle is produced by the release pipeline), so this job proves
+  # the JS stack and the tokenizer are libc-independent.
   # ------------------------------------------------------------------
-  verify:
-    name: full stack (native binary + real model)
+  musl:
+    name: musl (alpine node22)
     needs: lint
     runs-on: ubuntu-latest
+    container: node:22-alpine
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm ci
+      - run: node -e "console.log('libc check:', process.report.getReport().header.glibcVersionRuntime || 'musl')"
+      - run: npm run test:unit
+      - run: npm run test:packaging
+      - run: npm run tokenizer:diff
+
+  # ------------------------------------------------------------------
+  # full stack: build the native binary (PRIMARY backend), fetch the real
+  # model, then run integration + e2e + model chunks + install simulation
+  # + latency benchmark + Bun. Tests fail if the binary is missing.
+  # ------------------------------------------------------------------
+  full-stack:
+    name: full stack (${{ matrix.name }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: 'linux-x64 glibc', os: ubuntu-latest,     target: x86_64-unknown-linux-gnu,      out: dist/bin/linux-x64/laya-serve }
+          - { name: 'linux-arm64 glibc', os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu,   out: dist/bin/linux-arm64/laya-serve }
+          - { name: 'win-x64',        os: windows-latest,    target: x86_64-pc-windows-msvc,        out: dist/bin/win32-x64/laya-serve.exe }
+          - { name: 'win-arm64',      os: windows-11-arm,    target: aarch64-pc-windows-msvc,       out: dist/bin/win32-arm64/laya-serve.exe }
+          - { name: 'mac-arm64',      os: macos-latest,      target: aarch64-apple-darwin,          out: dist/bin/darwin-arm64/laya-serve }
+    runs-on: ${{ matrix.os }}
     env:
       LAYA_REQUIRE_MODEL: '1'
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
+        with: { node-version: 22, cache: npm }
 
       - uses: dtolnay/rust-toolchain@stable
+        with: { targets: '${{ matrix.target }}' }
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native/laya-serve
+        with: { workspaces: native/laya-serve }
 
-      - name: Build laya-serve (linux-x64)
-        run: cargo build --release --target x86_64-unknown-linux-gnu --manifest-path native/laya-serve/Cargo.toml
+      - name: Build laya-serve (primary backend)
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
 
       - name: Stage binary
+        shell: bash
         run: |
-          mkdir -p dist/bin/linux-x64
-          cp native/laya-serve/target/x86_64-unknown-linux-gnu/release/laya-serve dist/bin/linux-x64/laya-serve
-          chmod +x dist/bin/linux-x64/laya-serve
+          set -euo pipefail
+          mkdir -p "$(dirname '${{ matrix.out }}')"
+          BIN="native/laya-serve/target/${{ matrix.target }}/release/laya-serve"
+          [[ "${{ matrix.out }}" == *.exe ]] && BIN="$BIN.exe"
+          cp "$BIN" '${{ matrix.out }}'
+          chmod +x '${{ matrix.out }}' 2>/dev/null || true
+          ls -la "$(dirname '${{ matrix.out }}')"
 
       - run: npm ci
 
@@ -101,53 +134,34 @@ jobs:
       - name: Acquire model (verified download)
         run: npm run model:acquire
 
+      - name: Native binary is required (no silent wasm fallback)
+        run: node -e "import('./src/laya-native.js').then(m=>{console.log('platform slot:',m.shippedPlatformDir(),'| musl:',m.isMusl(),'| bundled:',m.hasBundledBinary());if(!m.hasBundledBinary())process.exit(1)})"
+
       - run: npm run test:integration
       - run: npm run test:e2e
       - run: npm run test:packaging
-      - run: npm run test:install
 
-  # ------------------------------------------------------------------
-  # the model-over-npm pipeline: split -> chunk packages -> reassemble
-  # must reproduce the checkpoint byte-for-byte
-  # ------------------------------------------------------------------
-  model-distribution:
-    name: model chunk pipeline
-    needs: lint
-    runs-on: ubuntu-latest
-    env:
-      LAYA_REQUIRE_MODEL: '1'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
+      - name: Model chunk pipeline (split -> chunks -> reassemble)
+        run: |
+          npm run model:chunks -- --chunk-mb 24 --model-version 1.0.0
+          npm run model:assemble -- --out "$RUNNER_TEMP/model.from-chunks.onnx"
+          npm run model:verify -- --model "$RUNNER_TEMP/model.from-chunks.onnx"
+          node ./tools/run-tests.js tests/integration/model-distribution.test.js
 
-      - name: Restore model cache
-        uses: actions/cache@v6
-        with:
-          path: models/model.onnx
-          key: model-${{ hashFiles('models/model.manifest.json') }}
+      - name: Install simulation (pack -> install into a clean dir -> run)
+        run: npm run test:install
 
-      - name: Acquire model
-        run: npm run model:acquire
+      - name: Latency benchmark (native, primary path)
+        run: node tools/bench.js --backend native --questions 10 --json bench-native.json
 
-      - name: Build chunk packages
-        run: npm run model:chunks -- --chunk-mb 24 --model-version 1.0.0
+      - name: Bun runtime smoke
+        uses: oven-sh/setup-bun@v2
+        with: { bun-version: latest }
+      - run: bun tests/bun/smoke.js
 
-      - name: Reassemble from chunks
-        run: npm run model:assemble -- --out "$RUNNER_TEMP/model.from-chunks.onnx"
-
-      - name: Verify checksums
-        run: npm run model:verify -- --model "$RUNNER_TEMP/model.from-chunks.onnx"
-
-      - name: Chunk pipeline tests (real model)
-        run: node ./tools/run-tests.js tests/integration/model-distribution.test.js
-
-      - name: Upload chunk packages
+      - name: Upload benchmark
         uses: actions/upload-artifact@v7
         with:
-          name: model-chunks
-          path: dist/model-chunks/
-          retention-days: 7
+          name: bench-${{ matrix.name }}
+          path: bench-native.json
+          retention-days: 30

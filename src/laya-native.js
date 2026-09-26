@@ -28,41 +28,93 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function resolveBinary() {
-  if (process.env.LAYA_SERVE_BIN) return process.env.LAYA_SERVE_BIN;
-  const plat = os.platform(); // linux | win32 | darwin
-  // NOTE: Bun on Windows-ARM64 reports x64 (emulation string); the real
-  // arch may be arm64. Probe candidate dirs and pick the first that exists.
-  // linux-*-musl is preferred on musl systems (Alpine/Docker): the
-  // binary itself is musl, and the ORT runtime ships BUNDLED in
-  // dist/bin/<plat>-<arch>-musl/lib/ (musl-native .so set extracted from the
-  // Alpine apk: libonnxruntime + protobuf/re2/abseil/libstdc++ — the PyPI
-  // .so is glibc-linked and can never load on musl). resolveBinary()
-  // injects the lib dir into the child process LD_LIBRARY_PATH so the
-  // binary finds its own bundled libs with zero system deps beyond musl.
+/**
+ * True when the process runs on musl (Alpine, some containers).
+ * A glibc-linked binary can never load there, so it must never be picked.
+ */
+export function isMusl() {
+  if (process.platform !== 'linux') return false;
+  try {
+    const report = process.report?.getReport?.();
+    if (report && report.header && 'glibcVersionRuntime' in report.header) return false;
+  } catch { /* fall through to the filesystem probe */ }
+  return fs.existsSync('/etc/alpine-release')
+    || fs.existsSync('/lib/ld-musl-x86_64.so.1')
+    || fs.existsSync('/lib/ld-musl-aarch64.so.1');
+}
+
+/** Platform slot we ship a native binary for (or null for unknown targets). */
+export function shippedPlatformDir() {
+  const plat = os.platform();
+  const arch = os.arch() === 'arm64' ? 'arm64' : 'x64';
+  if (plat === 'linux') return `linux-${arch}${isMusl() ? '-musl' : ''}`;
+  if (plat === 'win32') return `win32-${arch}`;
+  if (plat === 'darwin') return `darwin-${arch}`;
+  return null;
+}
+
+/**
+ * Locate the bundled laya-serve binary, or null when there is none.
+ *
+ * Order: LAYA_SERVE_BIN -> bundled binary for this platform (probing both
+ * arches, since Bun on Windows-ARM64 reports x64) -> PATH. On musl only the
+ * musl bundle is ever considered: the glibc binary cannot load there.
+ */
+export function resolveBinaryOrNull() {
+  if (process.env.LAYA_SERVE_BIN) {
+    return fs.existsSync(process.env.LAYA_SERVE_BIN) ? process.env.LAYA_SERVE_BIN : null;
+  }
+  const plat = os.platform();
+  const musl = isMusl();
   const arches = os.arch() === 'arm64' ? ['arm64', 'x64'] : ['x64', 'arm64'];
   const exe = plat === 'win32' ? 'laya-serve.exe' : 'laya-serve';
+
   const candidates = [];
   for (const arch of arches) {
     if (plat === 'linux') candidates.push(`linux-${arch}-musl`);
+    if (musl) continue; // never fall back to a glibc binary on musl
     candidates.push(`${plat}-${arch}`);
   }
+
   for (const dir of candidates) {
     const base = path.join(__dirname, '..', 'dist', 'bin', dir);
     const legacy = path.join(__dirname, '..', 'bin', dir);
     // musl: prefer the self-extracting bundle (ONE file, libs inside).
     if (dir.endsWith('-musl')) {
-      const bundle = path.join(base, 'laya-serve.bundle');
-      if (fs.existsSync(bundle)) return bundle;
-      const legacyBundle = path.join(legacy, 'laya-serve.bundle');
-      if (fs.existsSync(legacyBundle)) return legacyBundle;
+      for (const root of [base, legacy]) {
+        const bundle = path.join(root, 'laya-serve.bundle');
+        if (fs.existsSync(bundle)) return bundle;
+      }
     }
-    const local = path.join(base, exe);
-    if (fs.existsSync(local)) return local;
-    const legacyLocal = path.join(legacy, exe);
-    if (fs.existsSync(legacyLocal)) return legacyLocal;
+    for (const root of [base, legacy]) {
+      const local = path.join(root, exe);
+      if (fs.existsSync(local)) return local;
+    }
   }
-  return 'laya-serve'; // PATH fallback
+  return null;
+}
+
+/**
+ * Resolve the binary or throw an actionable error. The native binary is the
+ * primary backend - silently running the wasm fallback instead would hide a
+ * broken install, so this fails loudly.
+ */
+export function resolveBinary() {
+  const found = resolveBinaryOrNull();
+  if (found) return found;
+
+  // last resort: a dev build on PATH
+  if (!process.env.LAYA_SERVE_BIN && process.env.LAYA_ALLOW_PATH_BIN === '1') return 'laya-serve';
+
+  const slot = shippedPlatformDir();
+  throw new Error(
+    [
+      'laya-serve binary not found - the native backend is the primary path and must not silently fall back to wasm.',
+      `Expected dist/bin/${slot}/${os.platform() === 'win32' ? 'laya-serve.exe' : 'laya-serve'} (or dist/bin/${slot}/laya-serve.bundle on musl).`,
+      'Fix: reinstall the package, or build it with `cargo build --release` (see BUILD.md), or point LAYA_SERVE_BIN at a binary.',
+      'Only browsers should use the wasm fallback (backend: "wasm").'
+    ].join('\n')
+  );
 }
 
 /**
@@ -71,10 +123,8 @@ export function resolveBinary() {
  * backend on checkouts that have not built it.
  */
 export function hasBundledBinary() {
-  const resolved = resolveBinary();
-  return resolved !== 'laya-serve' && fs.existsSync(resolved);
+  return resolveBinaryOrNull() !== null;
 }
-
 export class NativeServer {
   constructor(options = {}) {
     this.modelDir = options.modelDir || path.join(__dirname, '..', 'models');

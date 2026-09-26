@@ -10,23 +10,31 @@ import crypto from 'node:crypto';
 import { hasBundledBinary } from '../../src/laya-native.js';
 
 /**
- * Backend used by HTTP/CLI end-to-end tests: the bundled native binary when
- * it has been built, the bundled wasm engine otherwise. Keeps the
- * wire-protocol tests running on checkouts without build outputs while
- * still covering the fast path wherever it exists.
+ * The bundled native binary is the PRIMARY inference path; the wasm engine
+ * is a browser/edge-case safety net. Tests must therefore exercise `native`
+ * on every platform we ship a binary for, and must FAIL (not silently skip)
+ * when that binary is missing - a silent fallback would hide a broken
+ * install. Set LAYA_ALLOW_WASM_FALLBACK=1 to explicitly accept the fallback
+ * (e.g. on a platform whose binary is not built yet).
  */
-export const E2E_BACKEND = hasBundledBinary() ? 'native' : 'wasm';
+export const WARM_FALLBACK = process.env.LAYA_ALLOW_WASM_FALLBACK === '1';
+export const HAS_NATIVE = hasBundledBinary();
 
-/** Skip reason for native-only tests, or false when the binary is present. */
-export const NATIVE_SKIP = hasBundledBinary()
+if (!HAS_NATIVE && !WARM_FALLBACK) {
+  console.warn(
+    '[tests] WARNING: no bundled laya-serve binary for this platform. ' +
+    'Native-backend tests will run and FAIL by design (wasm fallback is opt-in via LAYA_ALLOW_WASM_FALLBACK=1).'
+  );
+}
+
+/** Backend for end-to-end tests: native, always - unless the fallback is opted into. */
+export const E2E_BACKEND = HAS_NATIVE ? 'native' : (WARM_FALLBACK ? 'wasm' : 'native');
+
+/** Skip reason for native-only tests, or false (run them). */
+export const NATIVE_SKIP = HAS_NATIVE
   ? false
-  : 'no bundled laya-serve binary (build the native backend first)';
+  : (WARM_FALLBACK ? 'no bundled laya-serve binary (wasm fallback explicitly allowed)' : false);
 
-/**
- * Minimal tokenizer stub with the same call signature as a HF tokenizer:
- *   tok(text, { add_special_tokens }) -> { input_ids: { data: Int32Array } }
- * Deterministic: same text always produces the same ids.
- */
 export function fakeTokenizer() {
   const vocab = new Map();
   const tok = (text, _opts = {}) => {

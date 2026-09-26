@@ -51,7 +51,10 @@
     "model:test-registry": "node ./tools/model-chunks.js fetch",
     "postinstall": "node ./bin/postinstall.js",
     "prepublishOnly": "npm run lint && npm run test:unit && npm run test:packaging",
-    "tokenizer:diff": "node ./tools/tokenizer-diff.js"
+    "tokenizer:diff": "node ./tools/tokenizer-diff.js",
+    "bench": "node ./tools/bench.js",
+    "bench:wasm": "node ./tools/bench.js --backend wasm",
+    "test:bun": "bun ./tests/bun/smoke.js"
   },
   "repository": {
     "type": "git",

@@ -164,12 +164,26 @@ npx laya-system-one --port 8080 --backend native
 
 ## Performance
 
-Measured on a 4-core ARM64 cloud VM with the bundled `laya-serve` binary (the default backend). Your numbers will differ; run `npm run compare:all` to measure your own hardware.
+Measure it on your own hardware with `npm run bench` (writes a JSON report).
 
-| runtime | cold start | per request |
+Measured on a 4-core **Windows ARM64** laptop, Node 22, the bundled
+`laya-serve` binary (the default backend):
+
+| metric | `native` (default) | `wasm` (fallback) |
 |---|---|---|
-| node (native binary) | ~0.86 s | ~1.6 ms |
-| bun (native binary) | ~0.45 s | ~0.7 ms |
+| init (load model) | 1.8 s | 1.8 s |
+| cold question (first call, 4 questions) | 175 ms | 13 s |
+| warm, 4 questions per call | **131 ms** (p50 113, p95 288) | 24 s |
+| warm, 1 question per call | **51 ms** (p50 48, p95 71) | 6.2 s |
+| sustained throughput (1 q/call) | **19.4 q/s** | 0.16 q/s |
+
+The native binary is the product; the wasm engine is a safety net for
+browsers and exotic platforms, and it is ~100x slower by design: `tract`
+must specialize the whole model per input shape, so it runs a fixed padded
+shape (see `LayaEngine.padForWasm`) and pays for every position.
+
+If you are on a platform we ship a binary for and you see the wasm backend
+being used, that is a bug - the install is broken (see Troubleshooting).
 
 ## Size
 

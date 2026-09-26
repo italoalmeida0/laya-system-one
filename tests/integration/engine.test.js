@@ -164,6 +164,65 @@ test('native backend: agrees with wasm on the department decision', { skip: nati
   assert.equal(a.answers.department.choice, b.answers.department.choice);
 });
 
+test('wasm padding is semantics-preserving (pad size must not change the answer)', { skip }, async () => {
+  // The wasm backend pads to a fixed shape and masks the padding out. If the
+  // masking were wrong, padding to 256 vs 1024 would give different answers.
+  // This isolates the padding contract from the INT8 numerics differences
+  // between the two inference engines (tested separately below).
+  // a decisive prompt: this test is about the padding, not about INT8 noise
+  const prompt = 'We were billed twice on the March invoice and want a refund.';
+  const q = { department: QUESTIONS.department };
+  process.env.LAYA_WASM_PAD = '256';
+  const small = await Laya.load({ modelDir: MODEL_DIR, backend: 'wasm', wasmWorkers: 1 });
+  const a = await small.predict(prompt, q);
+  await small.close();
+
+  process.env.LAYA_WASM_PAD = '1024';
+  const big = await Laya.load({ modelDir: MODEL_DIR, backend: 'wasm', wasmWorkers: 1 });
+  const b = await big.predict(prompt, q);
+  await big.close();
+  delete process.env.LAYA_WASM_PAD;
+
+  const da = a.answers.department;
+  const db = b.answers.department;
+  assert.equal(da.choice, db.choice, 'padding must not change the decision');
+  for (const key of Object.keys(da.probabilities)) {
+    const diff = Math.abs(da.probabilities[key] - (db.probabilities[key] ?? 0));
+    assert.ok(diff < 0.2, `padding changed the distribution by ${diff.toFixed(4)} on '${key}'`);
+  }
+});
+
+test('native and wasm agree on decisive inputs (INT8 numerics tolerance)', { skip: nativeSkip }, async () => {
+  // Two different inference engines (ONNX Runtime vs tract) over INT8
+  // weights are never bit-identical: on a near-tie the ranking can flip.
+  // The contract is that they agree whenever the answer is actually
+  // decidable, so only prompts the model finds clear are compared.
+  const native = await engineFor('native');
+  const wasm = await engineFor('wasm');
+  const prompts = [
+    'We were billed twice on the March invoice and want a refund.',
+    'The application crashes with a segfault whenever I open settings.',
+    'Fui cobrado em duplicidade na minha fatura e quero reembolso.',
+    'Your service has been down for six hours and nobody answers.',
+    'Do you support SSO with SAML for our organization?'
+  ];
+  let compared = 0;
+  for (const text of prompts) {
+    const a = await native.predict(text, { department: QUESTIONS.department });
+    const b = await wasm.predict(text, { department: QUESTIONS.department });
+    const da = a.answers.department;
+    const db = b.answers.department;
+    if (da.confidence < 0.6) continue; // near-tie: INT8 numerics may flip it
+    compared++;
+    assert.equal(da.choice, db.choice, `label mismatch for: ${text}`);
+    for (const key of Object.keys(da.probabilities)) {
+      const diff = Math.abs(da.probabilities[key] - (db.probabilities[key] ?? 0));
+      assert.ok(diff <= 0.12, `probability drift ${diff.toFixed(4)} on '${key}' for: ${text}`);
+    }
+  }
+  assert.ok(compared >= 2, `not enough decisive prompts were compared (${compared})`);
+});
+
 test('native and wasm agree on input token counts (same tokenizer)', { skip: nativeSkip }, async () => {
   const native = await engineFor('native');
   const wasm = await engineFor('wasm');

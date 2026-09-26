@@ -45,7 +45,7 @@ async function getModule() {
 
 /**
  * Load a model. `source`: path to model.onnx or Uint8Array of its bytes.
- * Returns { infer(ids, markers, qtype) -> Float32Array, cacheSize(), free() }.
+ * Returns { infer(ids, attn, markers, markerMask, qtype) -> Float32Array, cacheSize(), free() }.
  */
 export async function loadWasmModel(source) {
   const glue = await getModule();
@@ -59,10 +59,13 @@ export async function loadWasmModel(source) {
   }
   const inner = glue.LayaWasm.load(bytes);
   return {
-    infer(inputIds, markerPos, qtype) {
+    infer(inputIds, attentionMask, markerPos, markerMask, qtype) {
       const ids = BigInt64Array.from(inputIds.map((v) => BigInt(v)));
+      const am = BigInt64Array.from(attentionMask.map((v) => BigInt(v)));
       const mp = BigInt64Array.from(markerPos.map((v) => BigInt(v)));
-      return inner.infer(ids, mp, BigInt(qtype));
+      // wasm-bindgen takes &[bool] as a Uint8Array of 0/1
+      const mm = Uint8Array.from(markerMask.map((v) => (v ? 1 : 0)));
+      return inner.infer(ids, am, mp, mm, BigInt(qtype));
     },
     cacheSize() { return inner.cache_size(); },
     free() { inner.free(); },

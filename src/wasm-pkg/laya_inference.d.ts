@@ -14,10 +14,14 @@ export class LayaWasm {
      */
     cache_size(): number;
     /**
-     * Run one inference. `input_ids`: i64 array as BigInt64Array or
-     * number[]; `marker_pos`: number[]; returns Float32Array logits.
+     * Run one inference.
+     *   input_ids      i64[]   (padded)
+     *   attention_mask i64[]   (0 on padding - keeps padded == unpadded)
+     *   marker_pos     i64[]   (0 on padding)
+     *   marker_mask    u8[]    (0/1 - wasm-bindgen has no &[bool])
+     * Returns Float32Array logits (one per real marker).
      */
-    infer(input_ids: BigInt64Array, marker_pos: BigInt64Array, qtype: bigint): Float32Array;
+    infer(input_ids: BigInt64Array, attention_mask: BigInt64Array, marker_pos: BigInt64Array, marker_mask: Uint8Array, qtype: bigint): Float32Array;
     /**
      * Parse + optimize ONNX bytes. Heavy (~seconds); call once.
      * `bytes`: full model.onnx contents.
@@ -33,7 +37,7 @@ export interface InitOutput {
     readonly laya_infer: (a: number, b: number, c: number, d: number, e: number, f: bigint, g: number, h: number) => bigint;
     readonly laya_load: (a: number, b: number) => bigint;
     readonly layawasm_cache_size: (a: number) => number;
-    readonly layawasm_infer: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
+    readonly layawasm_infer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: bigint) => [number, number, number, number];
     readonly layawasm_load: (a: number, b: number) => [number, number, number];
     readonly __wbindgen_exn_store_command_export: (a: number) => void;
     readonly __externref_table_alloc_command_export: () => number;

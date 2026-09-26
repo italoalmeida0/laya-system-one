@@ -27,6 +27,26 @@ model. `dependencies` is empty.
   - `src/_sharp_stub.cjs` (a shim for `transformers`' optional `sharp`
     dependency) was deleted with it.
 
+### Fixed
+- **backends could answer differently for the same request.** The native
+  binary iterates the question criteria from a `BTreeMap` (sorted keys) while
+  the JS engine kept JSON insertion order, so the two placed the options at
+  different marker positions and the model saw different prompts. Choice
+  criteria are now canonicalized (keys sorted) on both sides - which also
+  makes the answer independent of the key order a client happens to send.
+- **the wasm fallback crashed with `unreachable` after a few questions.**
+  `tract` specializes the model per concrete input shape and each plan holds
+  its own copy of the ~309 MB of weights; one plan per input length blew past
+  the wasm32 4 GB address space on the 5th distinct length. The wasm engine
+  now runs a fixed padded shape (attention_mask / marker_mask mark the padding
+  so the answer is unchanged) - one plan, bounded memory, no trap.
+
+### Added
+- `npm run bench` / `bench:wasm` — latency report (init, cold question, warm
+  avg/p50/p95 over N questions) with JSON output for CI.
+- `tests/bun/smoke.js` — the same stack under the Bun runtime.
+- CI now covers linux/arm64, windows/arm64, macOS, musl (Alpine) and Bun.
+
 ### Changed
 - `Laya.load()` documents and enforces the two backends; an unknown
   `backend` is now a clear error instead of silently falling through.

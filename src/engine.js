@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 import { resolveModel } from './model-resolver.js';
 
 /**
@@ -67,10 +68,52 @@ export class LayaEngine {
 
   async runSingle(item) {
     if (this.backend === 'wasm' && this.wasmPool) {
-      const { logits } = await this.wasmPool.infer(item);
-      return logits;
+      const padded = this.padForWasm(item);
+      const { logits } = await this.wasmPool.infer({ ...padded, qtype: item.qtype });
+      // the padded shape emits extra logits; only the real markers matter
+      return Array.from(logits).slice(0, item.markers.length);
     }
     throw new Error('LayaEngine: no inference backend loaded (use backend "native" or "wasm")');
+  }
+
+  /**
+   * Pad one item to the single fixed (S, M) shape the wasm engine runs.
+   *
+   * tract must specialize the whole model per concrete input shape, and
+   * every specialized plan keeps its own copy of the ~309 MB of weights.
+   * Growing one plan per input length exhausts the wasm32 address space
+   * (4 GB) after a handful of shapes and traps with "unreachable". So the
+   * wasm path always runs one shape and masks the padding out
+   * (attention_mask = 0, marker_mask = false), which makes the padded
+   * answer identical to the unpadded one.
+   */
+  padForWasm(item) {
+    // Shape budget: tract specializes the model per concrete (S, M) and each
+    // plan holds its own copy of the weights, so only a couple of shapes may
+    // ever exist. Short sequences use the small bucket, long ones the full
+    // max_len bucket (slow but rare). Both mask the padding out, so the
+    // answer is identical to the unpadded one.
+    // read per call so LAYA_WASM_PAD can be tuned without a restart
+    const padLen = Number.parseInt(process.env.LAYA_WASM_PAD || '', 10) || 256;
+    const S = item.ids.length <= padLen ? padLen : (this.config.max_len || 1024);
+    const M = 32;
+    if (item.ids.length > S) {
+      throw new Error(`wasm backend: sequence of ${item.ids.length} tokens exceeds the fixed shape ${S}`);
+    }
+    if (item.markers.length > M) {
+      throw new Error(`wasm backend: ${item.markers.length} markers exceed the fixed shape ${M}`);
+    }
+    const ids = item.ids.slice();
+    const attn = new Array(S).fill(0);
+    for (let i = 0; i < item.ids.length; i++) attn[i] = 1;
+    while (ids.length < S) ids.push(0); // <pad>
+
+    const markers = item.markers.slice();
+    const markerMask = new Array(M).fill(false);
+    for (let i = 0; i < item.markers.length; i++) markerMask[i] = true;
+    while (markers.length < M) markers.push(0);
+
+    return { ids, attn, markers, markerMask };
   }
 
   async run(batch) {
