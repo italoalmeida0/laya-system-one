@@ -116,31 +116,11 @@ jobs:
       # JS actions (their node is glibc), so the Alpine work runs inside Docker
       # and everything else stays on the host.
       - name: Build + test inside Alpine (musl)
+        shell: bash
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc "
-            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories
-            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
-            cat /etc/apk/repositories
-            apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
-            echo "--- musl runtime ---"
-            ls /lib/ld-musl* || true
-            ls -la /usr/lib/libonnxruntime* || true
-
-            echo "--- build laya-serve (musl) ---"
-            cargo build --release --target ${{ matrix.triple }} --manifest-path native/laya-serve/Cargo.toml
-
-            BIN="$PWD/native/laya-serve/target/${{ matrix.triple }}/release/laya-serve"
-            chmod +x "$BIN"
-            file "$BIN" || true
-            export LAYA_SERVE_BIN="$BIN"
-
-            echo "--- install + test ---"
-            npm ci
-            npm run model:acquire
-            npm run test:integration
-            npm run test:e2e
-            node tools/bench.js --backend native --questions 5 --json bench-native.json
-          '
+          chmod +x .github/alpine-test.sh
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
+            alpine:3.22 sh /work/.github/alpine-test.sh '${{ matrix.triple }}'
 
       - name: Upload benchmark
         uses: actions/upload-artifact@v7
