@@ -68,6 +68,25 @@ jobs:
       - name: Native binary is required (no silent wasm fallback)
         run: node -e "import('./src/laya-native.js').then(m=>{console.log('platform slot:',m.shippedPlatformDir(),'| musl:',m.isMusl(),'| bundled:',m.hasBundledBinary());if(!m.hasBundledBinary())process.exit(1)})"
 
+      - name: Diagnose the model-load crash (direct run, max logs)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "--- direct run with backtrace + ORT verbose logging ---"
+          RUST_BACKTRACE=full ORT_LOG_SEVERITY_LEVEL=0 \
+            ./dist/bin/darwin-x64/laya-serve --model-dir models --port 18099 & 
+          SRV=$!
+          sleep 25
+          echo "--- server output so far ---"
+          if kill -0 $SRV 2>/dev/null; then
+            echo "STILL RUNNING (good - it did not crash in 25s)"
+            curl -s http://127.0.0.1:18099/health || true
+            kill $SRV || true
+          else
+            echo "DIED (exit captured above)"
+          fi
+          wait $SRV || echo "server exit code: $?"
+
       - run: npm run test:integration
       - run: npm run test:e2e
       - run: node tools/bench.js --backend native --questions 5 --json bench-native.json
