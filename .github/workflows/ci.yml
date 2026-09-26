@@ -165,7 +165,7 @@ jobs:
       - name: Provide ORT libs for mac-x64 (no ort-sys prebuilt)
         if: matrix.target == 'x86_64-apple-darwin'
         run: |
-          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz"
+          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-x86_64-1.23.0.tgz"
           mkdir -p "$GITHUB_WORKSPACE/ort-libs"
           tar -xzf /tmp/ort.tgz -C "$GITHUB_WORKSPACE/ort-libs" --strip-components=1
           find "$GITHUB_WORKSPACE/ort-libs" -name 'libonnxruntime*.dylib' -exec cp {} "$GITHUB_WORKSPACE/ort-libs/" \;
@@ -184,7 +184,7 @@ jobs:
             export ORT_PREFER_DYNAMIC_LINK=1
             # ort's default asks for API 27 (matches the 1.28 prebuilts
             # ort-sys downloads), but the last official osx-x86_64 dylib is
-            # 1.22.0 (API 22). The mac-x64-legacy feature rebuilds ort
+            # 1.23.0 (API 23). The mac-x64-legacy feature rebuilds ort
             # against API 22, which covers everything laya-serve uses.
             cargo build --release --no-default-features --features mac-x64-legacy --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
           else

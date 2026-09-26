@@ -74,8 +74,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let model_path = args.model_dir.join("model.onnx");
     info!("loading {}", model_path.display());
-    // ORT API 22 (the last Intel dylib, used by the mac-x64-legacy feature)
-    // rejects ORT_ENABLE_LAYOUT/ORT_ENABLE_ALL - max valid is EXTENDED.
+    // ORT 1.23 (the last Intel dylib, used by the mac-x64-legacy feature)
+    // predates ORT_ENABLE_LAYOUT/ORT_ENABLE_ALL - max valid is EXTENDED.
     // Level2 already covers the fusions that matter for a CPU transformer
     // (GELU, LayerNorm, Attention), so the legacy build uses it.
     // NOTE: if the 1.22 optimizer itself segfaults on this graph, drop to

@@ -38,11 +38,12 @@ clap = { version = "4", features = ["derive"] }
 # downloads for every target except x86_64-apple-darwin).
 default = ["ort/std", "ort/ndarray", "ort/tracing", "ort/download-binaries", "ort/tls-native", "ort/copy-dylibs", "ort/api-27"]
 # mac-x64 legacy: ort-sys ships no prebuilt for x86_64-apple-darwin, and
-# Microsoft stopped publishing osx-x86_64 dylibs after ORT 1.23 (the last one
-# supports up to API 22). Rebuilds ort against API 22 only, which covers
-# everything laya-serve uses (init + Session + inputs + run). The CI links
-# the official 1.22.0 dylib for this target (see .github/workflows/ci.yml).
-mac-x64-legacy = ["ort/std", "ort/ndarray", "ort/tracing", "ort/copy-dylibs", "ort/api-22", "ort/tls-native"]
+# Microsoft stopped publishing osx-x86_64 dylibs after ORT 1.23. The 1.23.0
+# dylib exposes API 23, so this rebuilds ort against api-23 (verified:
+# ORT_API_VERSION == 23 in the 1.23.0 headers). Covers everything laya-serve
+# uses (init + Session + inputs + run). The CI links the official 1.23.0
+# dylib for this target (see .github/workflows/ci.yml).
+mac-x64-legacy = ["ort/std", "ort/ndarray", "ort/tracing", "ort/copy-dylibs", "ort/api-23", "ort/tls-native"]
 
 [build-dependencies]
 cc = "1"

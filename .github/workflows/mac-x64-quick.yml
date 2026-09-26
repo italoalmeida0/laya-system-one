@@ -1,6 +1,6 @@
 name: mac-x64 quick
 # Fast loop for the mac-x64 (Intel) target only: build laya-serve with the
-# mac-x64-legacy feature + official 1.22.0 dylib, then run the model-backed
+# mac-x64-legacy feature + official 1.23.0 dylib, then run the model-backed
 # suites. Trigger manually while iterating; the full matrix in ci.yml stays
 # the gate for merges.
 on:
@@ -23,7 +23,7 @@ jobs:
 
       - name: Provide ORT libs for mac-x64 (no ort-sys prebuilt)
         run: |
-          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz"
+          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-x86_64-1.23.0.tgz"
           mkdir -p "$GITHUB_WORKSPACE/ort-libs"
           tar -xzf /tmp/ort.tgz -C "$GITHUB_WORKSPACE/ort-libs" --strip-components=1
           find "$GITHUB_WORKSPACE/ort-libs" -name 'libonnxruntime*.dylib' -exec cp {} "$GITHUB_WORKSPACE/ort-libs/" \;
