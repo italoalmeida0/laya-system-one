@@ -117,8 +117,9 @@ jobs:
       # and everything else stays on the host.
       - name: Build + test inside Alpine (musl)
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
-            printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/edge/main' 'https://dl-cdn.alpinelinux.org/alpine/edge/community' > /etc/apk/repositories
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc "
+            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories
+            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
             cat /etc/apk/repositories
             apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
             echo "--- musl runtime ---"
@@ -191,13 +192,18 @@ jobs:
           ls -la "$GITHUB_WORKSPACE/ort-libs" | head
 
       - name: Build laya-serve (primary backend)
+        shell: bash
         run: |
-          EXTRA=""
+          set -euo pipefail
+          # Only mac-x64 has no ort-sys prebuilt (see the step above); every
+          # other target lets ort-sys use its own prebuilt. Exported vars, not
+          # `env -e` (BSD env has no -e) and not a bare `if` (Windows defaults
+          # to PowerShell).
           if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
-            # only mac-x64 has no ort-sys prebuilt -> link the dylib we provided
-            EXTRA="-e ORT_LIB_PATH=$GITHUB_WORKSPACE/ort-libs -e ORT_PREFER_DYNAMIC_LINK=1"
+            export ORT_LIB_PATH="$GITHUB_WORKSPACE/ort-libs"
+            export ORT_PREFER_DYNAMIC_LINK=1
           fi
-          env $EXTRA cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+          cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
 
       - name: Stage binary
         shell: bash
