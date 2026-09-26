@@ -15,7 +15,7 @@
  *
  * `build` writes:
  *   models/model.manifest.json                          (shipped with the pkg)
- *   dist/model-chunks/<pkg>/package.json + chunk.bin    (one npm pkg per chunk)
+ *   dist/release/model-chunks/<pkg>/package.json + chunk.bin  (one pkg per chunk)
  */
 import fs from 'node:fs';
 import path from 'node:path';

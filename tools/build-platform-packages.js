@@ -29,7 +29,7 @@
  * a distro npm mismatches), npm installs the universal one instead.
  *
  *   node tools/build-platform-packages.js build [--version 1.1.0]
- *   node tools/build-platform-packages.js pack  [--out dist/pkgs]
+ *   node tools/build-platform-packages.js pack  [--out dist/release/tarballs]
  *   node tools/build-platform-packages.js list
  */
 import fs from 'node:fs';

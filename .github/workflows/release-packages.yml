@@ -102,10 +102,13 @@ jobs:
           ls -la "$BIN"
           "$BIN" --help 2>&1 | head -3
 
+      - name: Fetch the model (verified against the manifest)
+        run: npm run model:acquire
+
       - name: Prove the binary answers questions (10 questions)
         env:
           LAYA_REQUIRE_MODEL: '1'
-        run: node tools/quick-check.js --binary '${{ matrix.out }}'
+        run: node tools/quick-check.js --binary 'dist/bin/${{ matrix.out }}'
 
       - name: Upload this platform's package
         uses: actions/upload-artifact@v7

@@ -30,10 +30,7 @@
     "test:e2e": "node ./tools/run-tests.js tests/e2e",
     "test:packaging": "node ./tools/run-tests.js tests/packaging",
     "test:all": "npm run lint && npm run test:unit && npm run test:packaging && npm run test:integration && npm run test:e2e",
-    "smoke": "node ./tools/smoke.js",
     "lint": "node ./tools/lint.js",
-    "compare": "node ./tools/compare.js",
-    "compare:all": "node ./tools/compare-all.js",
     "bundle": "node ./tools/make-bundle.js",
     "model:chunks": "node ./tools/model-chunks.js build --chunk-mb 24 --model-version $npm_package_version",
     "model:assemble": "node ./tools/model-chunks.js assemble",
@@ -41,7 +38,7 @@
     "model:publish": "node ./tools/model-chunks.js publish",
     "model:acquire": "node ./tools/acquire-model.js",
     "postinstall": "node ./bin/postinstall.js",
-    "prepublishOnly": "npm run check:quick",
+    "prepublishOnly": "npm run check:quick && npm run preflight",
     "tokenizer:diff": "node ./tools/tokenizer-diff.js",
     "bench": "node ./tools/bench.js",
     "bench:wasm": "node ./tools/bench.js --backend wasm",
@@ -53,7 +50,8 @@
     "test:rehearsal:all": "node ./tools/install-rehearsal.js --all",
     "check": "node ./tools/local-check.js",
     "check:quick": "node ./tools/local-check.js --quick",
-    "quick:check": "node ./tools/quick-check.js"
+    "quick:check": "node ./tools/quick-check.js",
+    "preflight": "node ./tools/preflight-publish.js"
   },
   "repository": {
     "type": "git",
