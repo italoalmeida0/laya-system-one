@@ -40,6 +40,9 @@ function setupSandbox(size = 3 * 1024 * 1024 + 12345) {
   };
 }
 
+/** The tool flattens scoped package names on disk: @scope/name -> @scope__name. */
+const pkgDirFor = (outDir, pkgName) => path.join(outDir, pkgName.replace('/', '__'));
+
 test('build: splits a model into chunk packages with per-chunk checksums', () => {
   const sb = setupSandbox();
   try {
@@ -54,17 +57,17 @@ test('build: splits a model into chunk packages with per-chunk checksums', () =>
 
     let total = 0;
     for (const [i, c] of manifest.chunks.entries()) {
-      const pkgDir = path.join(sb.outDir, c.package);
+      const pkgDir = pkgDirFor(sb.outDir, c.package);
       assert.ok(fs.existsSync(path.join(pkgDir, 'package.json')), `chunk ${i} has a package.json`);
       assert.ok(fs.existsSync(path.join(pkgDir, 'chunk.bin')), `chunk ${i} has chunk.bin`);
       assert.equal(c.index, i);
-      assert.equal(c.package, `laya-system-one-model-chunk-${String(i).padStart(2, '0')}`);
+      assert.equal(c.package, `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`);
       assert.equal(c.bytes, fs.statSync(path.join(pkgDir, 'chunk.bin')).size);
       total += c.bytes;
     }
     assert.equal(total, stat.size, 'chunks must cover the whole model');
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(sb.outDir, manifest.chunks[0].package, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDirFor(sb.outDir, manifest.chunks[0].package), 'package.json'), 'utf8'));
     assert.equal(pkg.version, '1.0.0');
     assert.equal(pkg.name, manifest.chunks[0].package);
     assert.deepEqual(pkg.scripts, {}, 'model data packages must never run install scripts');
@@ -129,7 +132,7 @@ test('publish --dry-run: validates every chunk against the manifest', () => {
 
     // corrupt one chunk -> publish must refuse
     const manifest = JSON.parse(fs.readFileSync(sb.manifestPath, 'utf8'));
-    fs.writeFileSync(path.join(sb.outDir, manifest.chunks[1].package, 'chunk.bin'), 'nope');
+    fs.writeFileSync(path.join(pkgDirFor(sb.outDir, manifest.chunks[1].package), 'chunk.bin'), 'nope');
     assert.throws(() => runTool(['publish', '--dry-run'], sb.env), /drifted from manifest/);
   } finally {
     rmrf(sb.dir);
@@ -141,13 +144,15 @@ test('publish --dry-run: validates every chunk against the manifest', () => {
 /** Serve chunk packages as npm-style tarballs over HTTP. */
 async function fakeRegistry(manifest, chunkBuffers) {
   const server = http.createServer((req, res) => {
-    const m = /^\/([^/]+)\/-\/([^/]+)\.tgz$/.exec(req.url || '');
+    // scoped tarball URL: /@scope/name/-/name-version.tgz
+    const m = /^\/((?:@[^/]+\/)?[^/]+)\/-\/[^/]+\.tgz$/.exec(req.url || '');
     if (!m) { res.writeHead(404); res.end('not found'); return; }
-    const idx = manifest.chunks.findIndex((c) => c.package === m[1]);
+    const pkgName = decodeURIComponent(m[1]);
+    const idx = manifest.chunks.findIndex((c) => c.package === pkgName);
     if (idx < 0) { res.writeHead(404); res.end('no such package'); return; }
 
     const tar = makeTar([
-      ['package/package.json', Buffer.from(JSON.stringify({ name: m[1], version: manifest.chunks[idx].version }))],
+      ['package/package.json', Buffer.from(JSON.stringify({ name: pkgName, version: manifest.chunks[idx].version }))],
       ['package/chunk.bin', chunkBuffers[idx]]
     ]);
     const tgz = zlib.gzipSync(tar);
@@ -164,7 +169,7 @@ test('assembleFromRegistry: rebuilds the model from npm-style tarballs', async (
   try {
     runTool(['build', '--model', sb.model, '--chunk-mb', '1'], sb.env);
     const manifest = JSON.parse(fs.readFileSync(sb.manifestPath, 'utf8'));
-    const buffers = manifest.chunks.map((c) => fs.readFileSync(path.join(sb.outDir, c.package, 'chunk.bin')));
+    const buffers = manifest.chunks.map((c) => fs.readFileSync(path.join(pkgDirFor(sb.outDir, c.package), 'chunk.bin')));
     const { server, registry } = await fakeRegistry(manifest, buffers);
 
     try {
@@ -185,7 +190,7 @@ test('assembleFromRegistry: a corrupted chunk from the registry is rejected', as
   try {
     runTool(['build', '--model', sb.model, '--chunk-mb', '1'], sb.env);
     const manifest = JSON.parse(fs.readFileSync(sb.manifestPath, 'utf8'));
-    const buffers = manifest.chunks.map((c) => fs.readFileSync(path.join(sb.outDir, c.package, 'chunk.bin')));
+    const buffers = manifest.chunks.map((c) => fs.readFileSync(path.join(pkgDirFor(sb.outDir, c.package), 'chunk.bin')));
     buffers[1] = Buffer.from('this is not the model chunk you are looking for');
     const { server, registry } = await fakeRegistry(manifest, buffers);
 
@@ -203,8 +208,8 @@ test('assembleFromRegistry: a corrupted chunk from the registry is rejected', as
 });
 
 test('tarballUrl + extractTgz agree with what the registry serves', () => {
-  const url = tarballUrl('laya-system-one-model-chunk-03', '2.0.0');
-  assert.equal(url, 'https://registry.npmjs.org/laya-system-one-model-chunk-03/-/laya-system-one-model-chunk-03-2.0.0.tgz');
+  const url = tarballUrl('@sys-one/laya-model-chunk-03', '2.0.0');
+  assert.equal(url, 'https://registry.npmjs.org/@sys-one/laya-model-chunk-03/-/laya-model-chunk-03-2.0.0.tgz');
 
   const payload = Buffer.from('chunk-bytes');
   const tgz = zlib.gzipSync(makeTar([['package/chunk.bin', payload]]));

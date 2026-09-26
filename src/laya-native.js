@@ -54,42 +54,114 @@ export function shippedPlatformDir() {
 }
 
 /**
- * Locate the bundled laya-serve binary, or null when there is none.
+ * Locate the laya-serve binary, or null when there is none.
  *
- * Order: LAYA_SERVE_BIN -> bundled binary for this platform (probing both
- * arches, since Bun on Windows-ARM64 reports x64) -> PATH. On musl only the
+ * Search order:
+ *   1. LAYA_SERVE_BIN (explicit override)
+ *   2. the installed platform package  node_modules/@sys-one/laya-serve-<slot>/
+ *      (this is how a normal `npm install laya-system-one` gets its binary -
+ *      npm picked the matching package via os/cpu in optionalDependencies)
+ *   3. the universal package  node_modules/@sys-one/laya-serve-universal/
+ *   4. a local dev build  dist/bin/<slot>/  (repo checkout / CI)
+ *
+ * Inside a package the layout is bin/<slot>/<file>, and the slot for the
+ * running platform is resolved the same way in every case. On musl only the
  * musl bundle is ever considered: the glibc binary cannot load there.
  */
 export function resolveBinaryOrNull() {
   if (process.env.LAYA_SERVE_BIN) {
     return fs.existsSync(process.env.LAYA_SERVE_BIN) ? process.env.LAYA_SERVE_BIN : null;
   }
+
+  const { exe, slots } = binaryCandidates();
+
+  for (const slot of slots) {
+    // 2/3) installed packages. `require.resolve` style probing keeps this
+    // working no matter how deep the install tree is (pnpm, workspaces, ...).
+    const pkgDir = findInstalledPackage(`@sys-one/laya-serve-${baseSlot(slot)}`);
+    const roots = [pkgDir, findInstalledPackage('@sys-one/laya-serve-universal')].filter(Boolean);
+
+    for (const root of roots) {
+      if (!root) continue;
+      // musl: prefer the self-extracting bundle (ONE file, libs inside).
+      if (slot.endsWith('-musl')) {
+        const bundle = path.join(root, 'bin', slot, 'laya-serve.bundle');
+        if (fs.existsSync(bundle)) return ensureExecutable(bundle);
+      }
+      const inPkg = path.join(root, 'bin', slot, exe);
+      if (fs.existsSync(inPkg)) return ensureExecutable(inPkg);
+    }
+
+    // 4) local dev build
+    for (const rel of [path.join('dist', 'bin', slot), path.join('bin', slot)]) {
+      const root = path.join(__dirname, '..', rel);
+      if (slot.endsWith('-musl')) {
+        const bundle = path.join(root, 'laya-serve.bundle');
+        if (fs.existsSync(bundle)) return ensureExecutable(bundle);
+      }
+      const local = path.join(root, exe);
+      if (fs.existsSync(local)) return ensureExecutable(local);
+    }
+  }
+  return null;
+}
+
+/** The non-musl package slot for a (possibly -musl) build slot. */
+function baseSlot(slot) {
+  return slot.replace(/-musl$/, '');
+}
+
+/**
+ * Slots to probe, most specific first. Bun on Windows-ARM64 reports x64, so
+ * both arches are tried; on musl the glibc variant is never used.
+ */
+function binaryCandidates() {
   const plat = os.platform();
   const musl = isMusl();
   const arches = os.arch() === 'arm64' ? ['arm64', 'x64'] : ['x64', 'arm64'];
   const exe = plat === 'win32' ? 'laya-serve.exe' : 'laya-serve';
-
-  const candidates = [];
+  const slots = [];
   for (const arch of arches) {
-    if (plat === 'linux') candidates.push(`linux-${arch}-musl`);
+    if (plat === 'linux') slots.push(`linux-${arch}-musl`);
     if (musl) continue; // never fall back to a glibc binary on musl
-    candidates.push(`${plat}-${arch}`);
+    slots.push(`${plat}-${arch}`);
   }
+  // the universal package stores glibc builds under the plain slot too, so a
+  // non-musl loop above already covers it; nothing extra to add here.
+  return { exe, slots };
+}
 
-  for (const dir of candidates) {
-    const base = path.join(__dirname, '..', 'dist', 'bin', dir);
-    const legacy = path.join(__dirname, '..', 'bin', dir);
-    // musl: prefer the self-extracting bundle (ONE file, libs inside).
-    if (dir.endsWith('-musl')) {
-      for (const root of [base, legacy]) {
-        const bundle = path.join(root, 'laya-serve.bundle');
-        if (fs.existsSync(bundle)) return bundle;
-      }
-    }
-    for (const root of [base, legacy]) {
-      const local = path.join(root, exe);
-      if (fs.existsSync(local)) return local;
-    }
+/**
+ * Make sure a resolved binary is executable, and return it.
+ *
+ * npm and Bun do not preserve file modes, and install scripts are skipped by
+ * `bun install` (untrusted by default), `npm ci --ignore-scripts`, some
+ * Docker builds and pnpm configs. A postinstall hook therefore cannot be the
+ * thing that makes the binary runnable - the loader fixes the mode itself,
+ * on the way to using it, whatever the package manager did or did not do.
+ */
+function ensureExecutable(bin) {
+  if (process.platform === 'win32') return bin; // modes are meaningless here
+  try {
+    const mode = fs.statSync(bin).mode;
+    if ((mode & 0o111) === 0) fs.chmodSync(bin, mode | 0o755);
+  } catch { /* read-only fs: the spawn will surface a clear error */ }
+  return bin;
+}
+
+/**
+ * Path of an installed package, or null. Walks up from this file looking at
+ * each node_modules so it works for the package's own deps, a parent
+ * project's deps and workspaces alike.
+ */
+function findInstalledPackage(name) {
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, 'node_modules', ...name.split('/'));
+    if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
   }
   return null;
 }

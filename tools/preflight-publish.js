@@ -70,32 +70,51 @@ try {
   problems.push(`npm pack --dry-run failed: ${err.message}`);
 }
 
-/* ------------------ 3. platform binaries must ship ------------------ */
+/* ------------- 3. the platform packages must be declared ------------ */
 
-const REQUIRED_BINARIES = [
-  'dist/bin/win32-x64/laya-serve.exe',
-  'dist/bin/win32-arm64/laya-serve.exe',
-  'dist/bin/linux-x64/laya-serve',
-  'dist/bin/linux-arm64/laya-serve',
-  'dist/bin/darwin-arm64/laya-serve',
-  'dist/bin/darwin-x64/laya-serve',
-  'dist/bin/linux-x64-musl/laya-serve.bundle',
-  'dist/bin/linux-arm64-musl/laya-serve.bundle'
+const REQUIRED_SERVE_PKGS = [
+  '@sys-one/laya-serve-darwin-arm64',
+  '@sys-one/laya-serve-darwin-x64',
+  '@sys-one/laya-serve-win32-x64',
+  '@sys-one/laya-serve-win32-arm64',
+  '@sys-one/laya-serve-linux-x64',
+  '@sys-one/laya-serve-linux-arm64',
+  '@sys-one/laya-serve-universal'
 ];
 
-for (const bin of REQUIRED_BINARIES) {
-  const inTarball = packed.includes(bin);
-  const onDisk = fs.existsSync(path.join(ROOT, bin));
-  if (!inTarball) {
-    const msg = `native binary missing from the tarball: ${bin}`;
-    if (allowMissingDist && !onDisk) console.log(`[preflight] WARN: ${msg}`);
-    else problems.push(msg);
+const opt = pkg.optionalDependencies || {};
+for (const name of REQUIRED_SERVE_PKGS) {
+  if (!opt[name]) {
+    problems.push(`optionalDependencies must list ${name} (the native binary ships as a package)`);
+  } else if (opt[name] !== pkg.version) {
+    problems.push(`${name} is pinned to ${opt[name]} but the package version is ${pkg.version}`);
   }
+}
+
+const chunkCount = Number(
+  JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8')).chunkCount || 0
+);
+for (let i = 0; i < chunkCount; i++) {
+  const name = `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`;
+  if (!opt[name]) problems.push(`optionalDependencies must list ${name} (the model ships as chunk packages)`);
+  else if (opt[name] !== pkg.version) problems.push(`${name} is pinned to ${opt[name]}, expected ${pkg.version}`);
+}
+
+// A built release must also have the packaged binaries on disk, so that
+// `publish-all.js` has something to upload. Dev checkouts tolerate absence.
+const binPkgRoot = path.join(ROOT, 'dist', 'release', 'binaries');
+const builtPkgs = fs.existsSync(binPkgRoot)
+  ? fs.readdirSync(binPkgRoot).filter((d) => fs.existsSync(path.join(binPkgRoot, d, 'package.json')))
+  : [];
+if (builtPkgs.length === 0) {
+  const msg = 'no platform packages built in dist/release/binaries (run tools/build-platform-packages.js build)';
+  if (allowMissingDist) console.log(`[preflight] WARN: ${msg}`);
+  else problems.push(msg);
 }
 
 /* ---------------------- 4. core files must ship --------------------- */
 
-for (const must of ['src/index.js', 'src/model-resolver.js', 'bin/cli.js', 'models/model.manifest.json', 'README.md', 'LICENSE']) {
+for (const must of ['src/index.js', 'src/model-resolver.js', 'src/laya-native.js', 'src/bpe-tokenizer.js', 'bin/cli.js', 'bin/postinstall.js', 'models/model.manifest.json', 'README.md', 'LICENSE']) {
   if (!packed.includes(must)) problems.push(`required file missing from the tarball: ${must}`);
 }
 

@@ -1,0 +1,267 @@
+name: release packages
+
+# Builds everything that gets published, on every platform, and uploads the
+# finished packages as artifacts. Nothing is published from CI on purpose:
+# publishing happens locally (npm login, no long-lived token in CI), see
+# tools/publish-all.js.
+#
+# Artifacts produced (consumed by `node tools/publish-all.js download --run <id>`):
+#   binaries-<slot>     @sys-one/laya-serve-<platform>   (one per platform)
+#   binaries-universal  @sys-one/laya-serve-universal    (every binary)
+#   model-chunks        the 13 @sys-one/laya-model-chunk-NN packages
+#   entry-package       the laya-system-one tarball + its package.json
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # the native binaries, one job per platform we ship
+  # ------------------------------------------------------------------
+  binaries:
+    name: binary (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: 'linux-x64',   os: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  out: linux-x64/laya-serve }
+          - { name: 'linux-arm64', os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, out: linux-arm64/laya-serve }
+          - { name: 'win32-x64',   os: windows-latest,   target: x86_64-pc-windows-msvc,    out: win32-x64/laya-serve.exe }
+          - { name: 'win32-arm64', os: windows-11-arm,   target: aarch64-pc-windows-msvc,   out: win32-arm64/laya-serve.exe }
+          - { name: 'darwin-arm64',os: macos-latest,     target: aarch64-apple-darwin,      out: darwin-arm64/laya-serve }
+          - { name: 'darwin-x64',  os: macos-15-intel,   target: x86_64-apple-darwin,       out: darwin-x64/laya-serve }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: '${{ matrix.target }}' }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: native/laya-serve }
+
+      - name: Provide ORT libs for mac-x64 (no ort-sys prebuilt)
+        if: matrix.target == 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-x86_64-1.23.0.tgz"
+          mkdir -p "$GITHUB_WORKSPACE/ort-libs"
+          tar -xzf /tmp/ort.tgz -C "$GITHUB_WORKSPACE/ort-libs" --strip-components=1
+          find "$GITHUB_WORKSPACE/ort-libs" -name 'libonnxruntime*.dylib' -exec cp {} "$GITHUB_WORKSPACE/ort-libs/" \;
+
+      - name: Build laya-serve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            export ORT_LIB_PATH="$GITHUB_WORKSPACE/ort-libs"
+            export ORT_PREFER_DYNAMIC_LINK=1
+            cargo build --release --no-default-features --features mac-x64-legacy --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+          else
+            cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+          fi
+
+      - name: Stage into dist/bin/<slot>
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT='dist/bin/${{ matrix.out }}'
+          mkdir -p "$(dirname "$OUT")"
+          BIN="native/laya-serve/target/${{ matrix.target }}/release/laya-serve"
+          [[ "$OUT" == *.exe ]] && BIN="$BIN.exe"
+          cp "$BIN" "$OUT"
+          chmod +x "$OUT" 2>/dev/null || true
+          # the Intel binary links ORT dynamically: ship the dylib beside it
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            cp ort-libs/libonnxruntime*.dylib "$(dirname "$OUT")/"
+            for dylib in "$(dirname "$OUT")"/libonnxruntime*.dylib; do
+              install_name_tool -id "@loader_path/$(basename "$dylib")" "$dylib"
+            done
+            for ref in $(otool -L "$OUT" | awk '/libonnxruntime/{print $1}'); do
+              install_name_tool -change "$ref" "@loader_path/$(basename "$ref")" "$OUT"
+            done
+          fi
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Materialise this platform's package
+        run: node tools/build-platform-packages.js build
+      - name: Smoke the packaged binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=$(find dist/release/binaries -type f \( -name 'laya-serve' -o -name 'laya-serve.exe' \) | head -1)
+          ls -la "$BIN"
+          "$BIN" --help 2>&1 | head -3
+
+      - name: Upload this platform's package
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.name }}
+          path: dist/release/binaries/
+          retention-days: 14
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # musl binaries: built inside Alpine (musl-native ORT libs from edge)
+  # ------------------------------------------------------------------
+  musl:
+    name: binary (linux-${{ matrix.arch }}-musl)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: ubuntu-latest,    triple: x86_64-unknown-linux-musl }
+          - { arch: arm64, runner: ubuntu-24.04-arm, triple: aarch64-unknown-linux-musl }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build in Alpine and copy the musl libs it links
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+            echo "https://dl-cdn.alpinelinux.org/alpine/edge/main" > /etc/apk/repositories
+            echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
+            apk add --no-cache nodejs npm build-base rust cargo pkgconf openssl-dev onnxruntime onnxruntime-dev
+            export ORT_LIB_PATH=/usr/lib
+            export ORT_PREFER_DYNAMIC_LINK=1
+            cargo build --release --manifest-path native/laya-serve/Cargo.toml
+
+            SLOT=dist/bin/linux-${{ matrix.arch }}-musl
+            mkdir -p "$SLOT/lib"
+            cp native/laya-serve/target/release/laya-serve "$SLOT/laya-serve"
+
+            # everything the binary needs at runtime, so the bundle is truly
+            # self-contained (ORT + its C++ deps). copylibs is not a thing on
+            # Alpine, so walk the dynamic deps like BUILD.md documents.
+            apk add --no-cache curl
+            copy_deps() {
+              for so in $(ldd "$1" | awk "/=> \//{print \$3}" | sort -u); do
+                base=$(basename "$so")
+                [ -e "$SLOT/lib/$base" ] && continue
+                cp "$so" "$SLOT/lib/$base"
+                copy_deps "$so"
+              done
+            }
+            copy_deps "$SLOT/laya-serve"
+            # soname links, not just the versioned files
+            for so in "$SLOT"/lib/*.so.*; do
+              base=$(basename "$so"); soname=${base%%.so.*}.so
+              [ -e "$SLOT/lib/$soname" ] || ln -sf "$base" "$SLOT/lib/$soname"
+            done
+            ls "$SLOT/lib" | wc -l
+            ldd "$SLOT/laya-serve" | head -5
+          '
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Bundle the musl binary (self-extracting, libs inside)
+        run: node tools/make-bundle.js linux-${{ matrix.arch }}-musl
+      - name: Prove the bundle runs on bare Alpine (no system deps)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 \
+            sh -c 'dist/bin/linux-${{ matrix.arch }}-musl/laya-serve.bundle --help | head -3'
+      - name: Materialise this platform's package
+        run: node tools/build-platform-packages.js build
+      - name: Upload this platform's package
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-linux-${{ matrix.arch }}-musl
+          path: dist/release/binaries/
+          retention-days: 14
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # the model, cut into 13 npm-sized chunk packages
+  # ------------------------------------------------------------------
+  model-chunks:
+    name: model chunks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+
+      - name: Restore model cache
+        uses: actions/cache@v6
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire the model (verified)
+        run: npm run model:acquire
+
+      - name: Split into chunk packages + reassemble to prove it round-trips
+        run: |
+          node tools/model-chunks.js build --chunk-mb 24
+          node tools/model-chunks.js assemble --out "$RUNNER_TEMP/model.from-chunks.onnx"
+          node tools/model-chunks.js verify --model "$RUNNER_TEMP/model.from-chunks.onnx"
+          # a model that only round-trips is not enough: make sure the
+          # reassembled file still produces the right answer
+          LAYA_MODEL_PATH="$RUNNER_TEMP/model.from-chunks.onnx" node ./tools/run-tests.js tests/integration/engine.test.js
+
+      - name: Upload the chunk packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-chunks
+          path: dist/release/model-chunks/
+          retention-days: 14
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # the entry package + every platform package, sanity-checked together
+  # ------------------------------------------------------------------
+  entry-package:
+    name: entry package
+    needs: [binaries, musl, model-chunks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+
+      - name: Download every package built above
+        uses: actions/download-artifact@v8
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Assemble the release tree
+        run: |
+          set -euo pipefail
+          ls -R dist/release | head -40
+          node tools/build-platform-packages.js build
+          node tools/publish-all.js inspect
+
+      - name: Verify every platform package has a binary
+        run: |
+          for pkg in darwin-arm64 darwin-x64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
+            d="dist/release/binaries/@sys-one__laya-serve-$pkg/bin"
+            if [ ! -d "$d" ] || [ -z "$(ls -A "$d")" ]; then
+              echo "MISSING binary for $pkg"; exit 1
+            fi
+            echo "ok $pkg"
+          done
+
+      - name: Pack the entry package (npm pack)
+        run: |
+          mkdir -p dist/release/entry
+          npm pack --pack-destination dist/release/entry
+
+      - name: Upload the entry package + the packed tarballs
+        uses: actions/upload-artifact@v7
+        with:
+          name: entry-package
+          path: |
+            dist/release/entry/
+            dist/release/tarballs/
+          retention-days: 14
+          if-no-files-found: error

@@ -34,7 +34,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const MODELS_DIR = path.join(ROOT, 'models');
-const DEFAULT_OUT_DIR = path.join(ROOT, 'dist', 'model-chunks');
+const DEFAULT_OUT_DIR = path.join(ROOT, 'dist', 'release', 'model-chunks');
 const DEFAULT_MANIFEST = path.join(MODELS_DIR, 'model.manifest.json');
 
 // overridable so tests can sandbox the tool (see tests/unit/chunks-tool.test.js)
@@ -78,7 +78,7 @@ async function cmdBuild(args) {
   }
   const chunkBytes = Math.max(1, parseInt(args['chunk-mb'] || '24', 10)) * MB;
   const modelVersion = args['model-version'] || '1.0.0';
-  const pkgPrefix = args.prefix || 'laya-system-one-model-chunk';
+  const pkgPrefix = args.prefix || '@sys-one/laya-model-chunk';
 
   const stat = await fs.promises.stat(modelPath);
   const chunkCount = Math.ceil(stat.size / chunkBytes);
@@ -102,7 +102,10 @@ async function cmdBuild(args) {
       await fd.read(buf, 0, len, start);
 
       const pkgName = `${pkgPrefix}-${pad(i)}`;
-      const pkgDir = path.join(outDir(), pkgName);
+      // scoped packages live under a literal @scope/ dir in node_modules, but
+      // these are generated locally: flatten to @scope__name so they stay in
+      // one flat outDir (assembly then finds chunk.bin by manifest lookup).
+      const pkgDir = path.join(outDir(), pkgName.replace('/', '__'));
       await fs.promises.mkdir(pkgDir, { recursive: true });
       await fs.promises.writeFile(path.join(pkgDir, 'chunk.bin'), buf);
       await fs.promises.writeFile(path.join(pkgDir, 'README.md'),
@@ -179,7 +182,7 @@ async function collectChunks(args, manifest) {
   }
   if (manifest?.chunks?.length) {
     // resolve from the built package dirs (offline, deterministic)
-    const found = manifest.chunks.map((c) => path.join(outDir(), c.package, 'chunk.bin'));
+    const found = manifest.chunks.map((c) => path.join(outDir(), c.package.replace('/', '__'), 'chunk.bin'));
     if (found.every((p) => fs.existsSync(p))) return found;
   }
   const fallback = findChunksOnDisk(MODELS_DIR, manifest);
@@ -223,13 +226,13 @@ async function cmdPublish(args) {
 
   // Sanity: every built chunk must match the manifest before publishing.
   for (const c of manifest.chunks) {
-    const p = path.join(outDir(), c.package, 'chunk.bin');
+    const p = path.join(outDir(), c.package.replace('/', '__'), 'chunk.bin');
     const sha = await sha256File(p);
     if (sha !== c.sha256) throw new Error(`chunk ${c.package} drifted from manifest — rebuild`);
   }
 
   for (const c of manifest.chunks) {
-    const pkgDir = path.join(outDir(), c.package);
+    const pkgDir = path.join(outDir(), c.package.replace('/', '__'));
     const cmdArgs = ['publish', '--access', 'public', '--registry', registry];
     if (dryRun) cmdArgs.push('--dry-run');
     console.log(`[chunks] npm ${cmdArgs.join(' ')}  (${c.package}@${c.version})`);

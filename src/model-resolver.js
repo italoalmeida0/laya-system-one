@@ -168,9 +168,14 @@ export function extractTgz(buf) {
   return extractTar(zlib.gunzipSync(buf));
 }
 
-/** URL of a package tarball on an npm registry (unscoped names). */
+/** URL of a package tarball on an npm registry.
+ * Scoped names keep their ``@scope/`` in the path and drop it from the
+ * tarball filename: ``@sys-one/model-chunk-00`` ->
+ * ``https://.../@sys-one/model-chunk-00/-/model-chunk-00-1.0.0.tgz``.
+ */
 export function tarballUrl(pkgName, version, registry = DEFAULT_REGISTRY) {
-  return `${registry.replace(/\/$/, '')}/${pkgName}/-/${pkgName}-${version}.tgz`;
+  const base = pkgName.includes('/') ? pkgName.split('/')[1] : pkgName;
+  return `${registry.replace(/\/$/, '')}/${pkgName}/-/${base}-${version}.tgz`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -275,14 +280,18 @@ export function findChunksOnDisk(dir, manifest) {
   }
   if (count ? direct.length === count : direct.length > 0) return direct;
 
-  // 2) installed npm chunk packages: <pkgName>/chunk.bin
+  // 2) installed npm chunk packages: <pkgName>/chunk.bin, including scoped
+  //    ones (@sys-one/...), which npm installs under node_modules/@sys-one/...
   const inPkgs = [];
   for (let i = 0; i < (count ?? 512); i++) {
     const pkgName = manifest?.chunks?.[i]?.package || `laya-system-one-model-chunk-${pad(i)}`;
-    if (!dirs.has(pkgName)) break;
-    const p = path.join(dir, pkgName, 'chunk.bin');
-    if (!fs.existsSync(p)) break;
-    inPkgs.push(p);
+    const candidates = [
+      path.join(dir, pkgName, 'chunk.bin'),
+      path.join(dir, pkgName.replace('/', path.sep), 'chunk.bin')
+    ];
+    const hit = candidates.find((p) => fs.existsSync(p));
+    if (!hit) break;
+    inPkgs.push(hit);
   }
   if (count ? inPkgs.length === count : inPkgs.length > 0) return inPkgs;
 
@@ -396,8 +405,20 @@ export async function resolveModel(options = {}) {
     }
   }
 
-  // 6) GitHub Releases asset (legacy path) — tries every declared URL.
-  // Deduplicated: a failed source must not be retried under an alias.
+  // 6) GitHub Releases asset — OPT-IN legacy path only. v1.1.0 acquires the
+  // model through npm (the chunk packages), so a GitHub download is a
+  // deliberate last resort, never an implicit one: on a normal install the
+  // npm path above always wins, and this only runs when explicitly enabled
+  // (LAYA_ALLOW_GITHUB_FALLBACK=1) or when the manifest demands it.
+  const allowGithub = process.env.LAYA_ALLOW_GITHUB_FALLBACK === '1' || manifest?.allowGithubFallback === true;
+  if (!allowGithub) {
+    throw new Error(
+      'Could not acquire the model from npm. The v1.1.0 acquisition path is fully npm-based '
+      + '(chunk packages) - see the error above for which step failed. Set LAYA_MODEL_PATH to an '
+      + 'existing model.onnx, or LAYA_ALLOW_GITHUB_FALLBACK=1 to permit the legacy GitHub download.'
+    );
+  }
+
   const urls = [...new Set([
     process.env.LAYA_MODEL_URL,
     manifest?.sources?.github,

@@ -11,14 +11,6 @@
   "files": [
     "bin/cli.js",
     "bin/postinstall.js",
-    "dist/bin/win32-x64/",
-    "dist/bin/win32-arm64/",
-    "dist/bin/linux-x64/",
-    "dist/bin/linux-x64-musl/laya-serve.bundle",
-    "dist/bin/linux-arm64/",
-    "dist/bin/linux-arm64-musl/laya-serve.bundle",
-    "dist/bin/darwin-x64/",
-    "dist/bin/darwin-arm64/",
     "src/",
     "models/rl_agent_config.json",
     "models/tokenizer.json",
@@ -55,7 +47,12 @@
     "tokenizer:diff": "node ./tools/tokenizer-diff.js",
     "bench": "node ./tools/bench.js",
     "bench:wasm": "node ./tools/bench.js --backend wasm",
-    "test:bun": "bun ./tests/bun/smoke.js"
+    "test:bun": "bun ./tests/bun/smoke.js",
+    "pkgs:build": "node ./tools/build-platform-packages.js build",
+    "pkgs:pack": "node ./tools/build-platform-packages.js pack",
+    "pkgs:list": "node ./tools/build-platform-packages.js list",
+    "publish:all": "node ./tools/publish-all.js",
+    "test:matrix": "node ./tools/test-install-matrix.js"
   },
   "repository": {
     "type": "git",
@@ -81,5 +78,27 @@
     "url": "https://github.com/italoalmeida0/laya-system-one/issues"
   },
   "homepage": "https://github.com/italoalmeida0/laya-system-one#readme",
-  "dependencies": {}
+  "dependencies": {},
+  "optionalDependencies": {
+    "@sys-one/laya-serve-darwin-arm64": "1.1.0",
+    "@sys-one/laya-serve-darwin-x64": "1.1.0",
+    "@sys-one/laya-serve-win32-x64": "1.1.0",
+    "@sys-one/laya-serve-win32-arm64": "1.1.0",
+    "@sys-one/laya-serve-linux-x64": "1.1.0",
+    "@sys-one/laya-serve-linux-arm64": "1.1.0",
+    "@sys-one/laya-serve-universal": "1.1.0",
+    "@sys-one/laya-model-chunk-00": "1.1.0",
+    "@sys-one/laya-model-chunk-01": "1.1.0",
+    "@sys-one/laya-model-chunk-02": "1.1.0",
+    "@sys-one/laya-model-chunk-03": "1.1.0",
+    "@sys-one/laya-model-chunk-04": "1.1.0",
+    "@sys-one/laya-model-chunk-05": "1.1.0",
+    "@sys-one/laya-model-chunk-06": "1.1.0",
+    "@sys-one/laya-model-chunk-07": "1.1.0",
+    "@sys-one/laya-model-chunk-08": "1.1.0",
+    "@sys-one/laya-model-chunk-09": "1.1.0",
+    "@sys-one/laya-model-chunk-10": "1.1.0",
+    "@sys-one/laya-model-chunk-11": "1.1.0",
+    "@sys-one/laya-model-chunk-12": "1.1.0"
+  }
 }

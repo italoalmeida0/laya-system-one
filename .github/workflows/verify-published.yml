@@ -1,0 +1,121 @@
+name: verify published
+
+# Installs the PUBLISHED package from the npm registry on every platform and
+# actually runs it. This is the check that matters after a publish: it proves
+# the os/cpu package selection works against the real registry, that the
+# binary arrives, that the model reaches the machine, and that inference
+# returns the expected answer.
+#
+#   gh workflow run verify-published.yml -f version=1.1.0-alpha.0 -f tag=alpha
+#
+# Run it after `node tools/publish-all.js publish --tag alpha` and before
+# promoting to `latest`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact version published (e.g. 1.1.0-alpha.0)'
+        required: true
+      tag:
+        description: 'dist-tag it was published under'
+        required: false
+        default: 'alpha'
+
+jobs:
+  verify:
+    name: install & run (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: 'linux-x64 glibc',   os: ubuntu-latest,    expect: linux-x64 }
+          - { name: 'linux-arm64 glibc', os: ubuntu-24.04-arm, expect: linux-arm64 }
+          - { name: 'win-x64',           os: windows-latest,   expect: win32-x64 }
+          - { name: 'win-arm64',         os: windows-11-arm,   expect: win32-arm64 }
+          - { name: 'mac-arm64',         os: macos-latest,     expect: darwin-arm64 }
+          - { name: 'mac-x64',           os: macos-15-intel,   expect: darwin-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v7
+        with: { node-version: 22 }
+
+      - name: Install from the registry (no cache, no local files)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verify && cd verify
+          npm init -y >/dev/null
+          npm install "laya-system-one@${{ inputs.version }}" --no-audit --no-fund
+          echo "--- what npm actually installed ---"
+          ls node_modules/@sys-one/ 2>/dev/null || echo "(no @sys-one packages?!)"
+
+      - name: The platform package must be the one we expect
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd verify
+          WANT="node_modules/@sys-one/laya-serve-${{ matrix.expect }}"
+          if [ ! -d "$WANT" ]; then
+            echo "expected $WANT to be installed"; ls node_modules/@sys-one; exit 1
+          fi
+          echo "ok: $WANT present"
+          BIN=$(find "$WANT/bin" -type f \( -name 'laya-serve' -o -name 'laya-serve.exe' \) | head -1)
+          [ -n "$BIN" ] || { echo "no binary in $WANT"; exit 1; }
+          echo "binary: $BIN"
+          ls -la "$BIN"
+
+      - name: The model chunks must have arrived too
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd verify
+          COUNT=$(ls -d node_modules/@sys-one/laya-model-chunk-* 2>/dev/null | wc -l)
+          echo "model chunk packages installed: $COUNT"
+          [ "$COUNT" -ge 13 ] || { echo "expected 13 chunk packages"; exit 1; }
+
+      - name: Run a real inference (native binary, no wasm fallback)
+        shell: bash
+        env:
+          LAYA_REQUIRE_MODEL: '1'
+        run: |
+          set -euo pipefail
+          cd verify
+          cat > check.mjs <<'JS'
+          import { Laya } from 'laya-system-one';
+          const laya = await Laya.load({ backend: 'native' });
+          const out = await laya.predict(
+            'We were billed twice on the March invoice and want a refund.',
+            { department: { type: 'choice', instructions: 'Which department?',
+                criteria: { billing: 'refunds and invoices', tech: 'bugs', sales: 'upgrades' } } }
+          );
+          const choice = out.answers.department.choice;
+          console.log('backend:', laya.backend ?? 'native', '| answer:', choice);
+          if (choice !== 'billing') { console.error('wrong answer:', JSON.stringify(out.answers)); process.exit(1); }
+          await laya.close();
+          console.log('VERIFIED');
+          JS
+          node check.mjs
+
+      - name: Confirm it did NOT silently fall back to wasm
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd verify
+          node -e "
+            import('laya-system-one/src/laya-native.js').then(m => {
+              const bin = m.resolveBinaryOrNull();
+              console.log('resolved binary:', bin);
+              if (!bin || !bin.includes('node_modules')) {
+                console.error('the binary did not come from the installed package'); process.exit(1);
+              }
+              console.log('OK: binary came from node_modules');
+            });
+          "
+
+      - name: CLI works from a clean install
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd verify
+          npx laya-system-one --version
