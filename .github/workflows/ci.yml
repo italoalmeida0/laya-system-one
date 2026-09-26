@@ -118,6 +118,9 @@ jobs:
       - name: Build + test inside Alpine (musl)
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+            sed -i 's/v3\.\*/edge/g; /alpine/d' /etc/apk/repositories 2>/dev/null || true
+            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/main' >> /etc/apk/repositories
+            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
             apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
             echo "--- musl runtime ---"
             ls /lib/ld-musl* || true
@@ -179,8 +182,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: native/laya-serve }
 
+      - name: Provide ORT libs for mac-x64 (no ort-sys prebuilt)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz"
+          mkdir -p "$GITHUB_WORKSPACE/ort-libs"
+          tar -xzf /tmp/ort.tgz -C "$GITHUB_WORKSPACE/ort-libs" --strip-components=1
+          find "$GITHUB_WORKSPACE/ort-libs" -name 'libonnxruntime*.dylib' -exec cp {} "$GITHUB_WORKSPACE/ort-libs/" \;
+          ls -la "$GITHUB_WORKSPACE/ort-libs" | head
+
       - name: Build laya-serve (primary backend)
         run: cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+        env:
+          ORT_LIB_PATH: ${{ github.workspace }}/ort-libs
+          ORT_PREFER_DYNAMIC_LINK: '1'
 
       - name: Stage binary
         shell: bash
