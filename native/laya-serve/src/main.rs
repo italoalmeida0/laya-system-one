@@ -74,12 +74,20 @@ async fn main() -> anyhow::Result<()> {
     }
     let model_path = args.model_dir.join("model.onnx");
     info!("loading {}", model_path.display());
+    // ORT API 22 (the last Intel dylib, used by the mac-x64-legacy feature)
+    // rejects ORT_ENABLE_LAYOUT/ORT_ENABLE_ALL - max valid is EXTENDED.
+    // Level2 already covers the fusions that matter for a CPU transformer
+    // (GELU, LayerNorm, Attention), so the legacy build uses it.
+    #[cfg(feature = "mac-x64-legacy")]
+    let opt_level = GraphOptimizationLevel::Level2;
+    #[cfg(not(feature = "mac-x64-legacy"))]
+    let opt_level = GraphOptimizationLevel::Level3;
     let session = if args.threads > 0 {
-        oe(oe(oe(Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3))?
+        oe(oe(oe(Session::builder()?.with_optimization_level(opt_level))?
             .with_intra_threads(args.threads))?
             .commit_from_file(&model_path))?
     } else {
-        oe(oe(Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3))?
+        oe(oe(Session::builder()?.with_optimization_level(opt_level))?
             .commit_from_file(&model_path))?
     };
 
