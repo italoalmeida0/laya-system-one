@@ -48,23 +48,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Stamp the requested version
         if: inputs.version != ''
-        shell: bash
-        env:
-          WANT: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const v = process.env.WANT;
-            for (const f of ["package.json", "package-lock.json"]) {
-              if (!fs.existsSync(f)) continue;
-              const j = JSON.parse(fs.readFileSync(f, "utf8"));
-              j.version = v;
-              if (j.packages && j.packages[""]) j.packages[""].version = v;
-              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\\n");
-            }
-            console.log("version stamped:", v);
-          '
+        run: node tools/set-version.js ${{ inputs.version }}
+
 
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: '${{ matrix.target }}' }
@@ -116,7 +101,13 @@ jobs:
 
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - name: Install (no dependencies to install - see note)
+        # `npm ci` insists the lockfile lists every optionalDependency, but
+        # those are the @sys-one packages this very workflow is about to
+        # build: on a first release they do not exist on the registry yet, so
+        # no lockfile can satisfy it. There are no real dependencies to
+        # install, so a plain `npm install` is both correct and enough.
+        run: npm install --no-audit --no-fund --ignore-scripts
       - name: Materialise this platform's package
         run: node tools/build-platform-packages.js build
       - name: Smoke the packaged binary
@@ -159,23 +150,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Stamp the requested version
         if: inputs.version != ''
-        shell: bash
-        env:
-          WANT: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("fs");
-            const v = process.env.WANT;
-            for (const f of ["package.json", "package-lock.json"]) {
-              if (!fs.existsSync(f)) continue;
-              const j = JSON.parse(fs.readFileSync(f, "utf8"));
-              j.version = v;
-              if (j.packages && j.packages[""]) j.packages[""].version = v;
-              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\\n");
-            }
-            console.log("version stamped:", v);
-          '
+        run: node tools/set-version.js ${{ inputs.version }}
 
       - name: Build in Alpine and copy the musl libs it links
         run: |
@@ -219,7 +194,13 @@ jobs:
 
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - name: Install (no dependencies to install - see note)
+        # `npm ci` insists the lockfile lists every optionalDependency, but
+        # those are the @sys-one packages this very workflow is about to
+        # build: on a first release they do not exist on the registry yet, so
+        # no lockfile can satisfy it. There are no real dependencies to
+        # install, so a plain `npm install` is both correct and enough.
+        run: npm install --no-audit --no-fund --ignore-scripts
       - name: Bundle the musl binary (self-extracting, libs inside)
         run: node tools/make-bundle.js linux-${{ matrix.arch }}-musl
       - name: Prove the bundle runs on bare Alpine (no system deps)
@@ -246,7 +227,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - name: Install (no dependencies to install - see note)
+        # `npm ci` insists the lockfile lists every optionalDependency, but
+        # those are the @sys-one packages this very workflow is about to
+        # build: on a first release they do not exist on the registry yet, so
+        # no lockfile can satisfy it. There are no real dependencies to
+        # install, so a plain `npm install` is both correct and enough.
+        run: npm install --no-audit --no-fund --ignore-scripts
 
       - name: Restore model cache
         uses: actions/cache@v6
@@ -288,7 +275,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - name: Install (no dependencies to install - see note)
+        # `npm ci` insists the lockfile lists every optionalDependency, but
+        # those are the @sys-one packages this very workflow is about to
+        # build: on a first release they do not exist on the registry yet, so
+        # no lockfile can satisfy it. There are no real dependencies to
+        # install, so a plain `npm install` is both correct and enough.
+        run: npm install --no-audit --no-fund --ignore-scripts
 
       - name: Download every package built above
         uses: actions/download-artifact@v8
