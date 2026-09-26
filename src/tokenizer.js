@@ -1,14 +1,27 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import * as ort from 'onnxruntime-web';
+
+const ORT_SYMBOL = Symbol.for('onnxruntime');
+
+// WeakMap<tokenizer, Map<text, number[]>> — avoids leaking tokenizers.
+const _encodeCache = new WeakMap();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Ensure ONNX runtime symbol is bound for web build compatibility in Bun/Web
-const ORT_SYMBOL = Symbol.for('onnxruntime');
-if (!(ORT_SYMBOL in globalThis)) {
-  globalThis[ORT_SYMBOL] = ort;
+// Bind the matching ORT symbol lazily so @huggingface/transformers finds a
+// backend: onnxruntime-node server-side (Node/Bun), onnxruntime-web in the
+// browser. Importing onnxruntime-web statically server-side would pull the
+// full WASM bundle into memory and slow startup for nothing.
+let _ortBound = false;
+async function ensureOrtSymbol() {
+  if (_ortBound || (ORT_SYMBOL in globalThis)) { _ortBound = true; return; }
+  try {
+    const isBrowser = typeof window !== 'undefined';
+    const ort = await import(isBrowser ? 'onnxruntime-web' : 'onnxruntime-node');
+    globalThis[ORT_SYMBOL] = ort.default || ort;
+  } catch { /* transformers bundles its own copy; not fatal */ }
+  _ortBound = true;
 }
 
 export const QTYPES = {
@@ -59,16 +72,29 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
   const clsTokenId = tok.cls_token_id ?? 2;
   const sepTokenId = tok.sep_token_id ?? 1;
 
+  // Per-tokenizer encode cache: Tetris/game loops repeat the same
+  // instructions + option labels every frame. Caching avoids re-running
+  // the 256k BPE encode (~1-2ms each) on every request.
+  let cache = _encodeCache.get(tok);
+  if (!cache) { cache = new Map(); _encodeCache.set(tok, cache); }
+  const encodeCached = (text) => {
+    let hit = cache.get(text);
+    if (hit) return hit;
+    const enc = tok(text, { add_special_tokens: false });
+    hit = Array.from(enc.input_ids.data || enc.input_ids).map(Number);
+    if (cache.size > 2000) cache.clear();
+    cache.set(text, hit);
+    return hit;
+  };
+
   const opts = renderOptions(q);
   const ins = String(q.ins).replaceAll(maskTok, ' ');
 
-  const headEncoded = tok(`${q.t} question: ${ins}`, { add_special_tokens: false });
-  let headIds = Array.from(headEncoded.input_ids.data || headEncoded.input_ids).map(Number);
+  let headIds = encodeCached(`${q.t} question: ${ins}`);
 
   const optIds = [];
   for (const opt of opts) {
-    const optEncoded = tok(` ${opt.replaceAll(maskTok, ' ')}`, { add_special_tokens: false });
-    const rawIds = Array.from(optEncoded.input_ids.data || optEncoded.input_ids).map(Number);
+    const rawIds = encodeCached(` ${opt.replaceAll(maskTok, ' ')}`);
     optIds.push([maskTokenId, ...rawIds.slice(0, 48)]);
   }
 
@@ -93,6 +119,8 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
 
   const room = Math.max(0, maxLen - ids.length - 1);
   const stateStr = serializeState(state).replaceAll(maskTok, ' ');
+  // NOTE: state changes every frame, so it is NOT cached — only the
+  // repeated question/option prefixes above benefit from the cache.
   const stEncoded = tok(stateStr, { add_special_tokens: false });
   const stIds = Array.from(stEncoded.input_ids.data || stEncoded.input_ids).map(Number);
   
@@ -106,17 +134,51 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
 }
 
 export async function loadTokenizer(modelDir) {
+  await ensureOrtSymbol();
   const dir = modelDir || path.resolve(__dirname, '../models');
-  const isBun = typeof Bun !== 'undefined';
+  const isBrowser = typeof window !== 'undefined';
 
+  if (isBrowser) {
+    // Browser has no fs: use the web build + file:// URL.
+    const req = createRequire(import.meta.url);
+    const resolved = req.resolve('@huggingface/transformers');
+    const webPath = resolved.replace(/transformers\.node\.(cjs|mjs)/, 'transformers.web.js');
+    const mod = await import(pathToFileURL(webPath).href);
+    return await mod.AutoTokenizer.from_pretrained(pathToFileURL(dir).href);
+  }
+
+  // Bun: web build (no fs dependency on sharp; proven working on
+  // Windows x64 + WSL2). Engine still uses onnxruntime-node natively.
+  const isBun = typeof Bun !== 'undefined';
   if (isBun) {
     const req = createRequire(import.meta.url);
     const resolved = req.resolve('@huggingface/transformers');
     const webPath = resolved.replace(/transformers\.node\.(cjs|mjs)/, 'transformers.web.js');
     const mod = await import(pathToFileURL(webPath).href);
     return await mod.AutoTokenizer.from_pretrained(pathToFileURL(dir).href);
-  } else {
-    const mod = await import('@huggingface/transformers');
-    return await mod.AutoTokenizer.from_pretrained(dir, { local_files_only: true });
   }
+
+  // Node.js: node build + stub for the optional 'sharp' dependency
+  // (images/audio only — never used for tokenizers). Sharp's native
+  // binding may be missing/broken on some platforms (e.g. WSL2 ARM64
+  // without libvips); redirect its resolution to a no-op stub.
+  try {
+    const M = await import('node:module').then(m => m.default || m);
+    const origResolve = M._resolveFilename;
+    let needStub = false;
+    try {
+      const req = createRequire(import.meta.url);
+      req('sharp');
+    } catch {
+      needStub = true;
+    }
+    if (needStub) {
+      M._resolveFilename = function (request, ...rest) {
+        if (request === 'sharp') return path.join(__dirname, '_sharp_stub.cjs');
+        return origResolve.call(this, request, ...rest);
+      };
+    }
+  } catch { /* best-effort; import below will surface real errors */ }
+  const mod = await import('@huggingface/transformers');
+  return await mod.AutoTokenizer.from_pretrained(dir, { local_files_only: true });
 }

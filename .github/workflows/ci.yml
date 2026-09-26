@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  npm_config_fund: 'false'
+  npm_config_audit: 'false'
+
+jobs:
+  # ------------------------------------------------------------------
+  # fast, offline gate: syntax, packaging metadata and docs consistency
+  # ------------------------------------------------------------------
+  lint:
+    name: lint & hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+
+  # ------------------------------------------------------------------
+  # unit tests + packaging on every OS/Node combination we support
+  # ------------------------------------------------------------------
+  unit:
+    name: unit (node ${{ matrix.node }} / ${{ matrix.os }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [18.x, 20.x, 22.x]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:unit
+      - run: npm run test:packaging
+
+  # ------------------------------------------------------------------
+  # real-model tests: the model is cached between runs, then the whole
+  # engine stack is exercised (determinism, backends, wire protocol, CLI)
+  # ------------------------------------------------------------------
+  integration:
+    name: integration & e2e (real model)
+    needs: lint
+    runs-on: ubuntu-latest
+    env:
+      LAYA_REQUIRE_MODEL: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+
+      - name: Restore model cache
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire model (verified download)
+        run: npm run model:acquire
+
+      - run: npm run test:integration
+      - run: npm run test:e2e
+
+  # ------------------------------------------------------------------
+  # the model-over-npm pipeline: split -> chunk packages -> reassemble
+  # must reproduce the checkpoint byte-for-byte
+  # ------------------------------------------------------------------
+  model-distribution:
+    name: model chunk pipeline
+    needs: lint
+    runs-on: ubuntu-latest
+    env:
+      LAYA_REQUIRE_MODEL: '1'
+      LAYA_SKIP_MODEL_DIST: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire model
+        run: npm run model:acquire
+
+      - name: Build chunk packages
+        run: npm run model:chunks -- --chunk-mb 24 --model-version 1.0.0
+
+      - name: Reassemble from chunks
+        run: npm run model:assemble -- --out "$RUNNER_TEMP/model.from-chunks.onnx"
+
+      - name: Verify checksums
+        run: npm run model:verify -- --model "$RUNNER_TEMP/model.from-chunks.onnx"
+
+      - name: Chunk pipeline tests (real model)
+        run: node --test tests/integration/model-distribution.test.js
+
+      - name: Upload chunk packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-chunks
+          path: dist/model-chunks/
+          retention-days: 7
+
+  # ------------------------------------------------------------------
+  # "does it work for someone else": pack, install into a clean project
+  # ------------------------------------------------------------------
+  package:
+    name: package & fresh install
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:packaging
+      - run: npm run test:install
+
+      - name: Upload packed tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: '*.tgz'
+          retention-days: 7

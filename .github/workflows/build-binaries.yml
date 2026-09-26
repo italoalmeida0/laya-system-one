@@ -1,0 +1,61 @@
+name: build-binaries
+
+# Reusable (called by release.yml) and runnable by hand.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            out: dist/bin/win32-x64/laya-serve.exe
+            artifact: win32-x64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            out: dist/bin/win32-arm64/laya-serve.exe
+            artifact: win32-arm64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            out: dist/bin/linux-x64/laya-serve
+            artifact: linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            out: dist/bin/linux-arm64/laya-serve
+            artifact: linux-arm64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            out: dist/bin/darwin-arm64/laya-serve
+            artifact: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build laya-serve
+        run: cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p "$(dirname '${{ matrix.out }}')"
+          BIN="native/laya-serve/target/${{ matrix.target }}/release/laya-serve"
+          [[ "${{ matrix.out }}" == *.exe ]] && BIN="$BIN.exe"
+          cp "$BIN" '${{ matrix.out }}'
+          chmod +x '${{ matrix.out }}' 2>/dev/null || true
+
+      # Artifact name == output directory so download-artifact can restore
+      # the dist/bin/<platform>/ layout with a single step.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.out }}
+          if-no-files-found: error
+          retention-days: 14

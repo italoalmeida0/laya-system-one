@@ -1,0 +1,61 @@
+[package]
+name = "laya-inference"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust inference core for laya-system-one (tract, no ONNX Runtime)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tract-onnx = "0.23"
+tract-core = "0.23"
+tract-hir = "0.23"
+ndarray = "0.16"
+anyhow = "1"
+serde_json = "1"
+prost = "0.14"
+# wasm target: JS glue (getrandom shim needed for wasm32-unknown)
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+# tract-onnx-opl pulls getrandom 0.4 via rand; on wasm32-unknown it needs
+# the wasm_js feature explicitly.
+[target.'cfg(target_arch = "wasm32")'.dependencies.getrandom]
+version = "0.4"
+features = ["wasm_js"]
+
+[features]
+default = []
+napi = ["dep:napi", "dep:napi-derive"]
+nebula = []
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:getrandom"]
+
+[dependencies.napi]
+version = "2"
+optional = true
+features = ["napi6", "tokio_rt"]
+
+[dependencies.napi-derive]
+version = "2"
+optional = true
+
+[patch.crates-io]
+# Vendored: build.rs patched so aarch64-pc-windows-msvc uses the GNU asm
+# path (clang + llvm-lib) instead of the MASM path (only valid for x86_64).
+# See vendor/tract-linalg/build.rs `use_masm`.
+tract-linalg = { path = "vendor/tract-linalg" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# Windows ARM64 (MSVC): tract-linalg's hand-written .S kernels only
+# assemble with clang. Force clang-cl + llvm-lib when targeting
+# aarch64-pc-windows-msvc so `cargo build` works out of the box with
+# VS Build Tools installed (no manual env setup).
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld"

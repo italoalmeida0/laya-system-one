@@ -1,0 +1,124 @@
+name: publish-npm
+
+# Manual, deliberately: nothing goes to the npm registry by accident.
+# Publishes the model chunk packages first, then the main package.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (validate everything, publish nothing)'
+        type: boolean
+        default: true
+      publish_chunks:
+        description: 'Publish the model chunk packages'
+        type: boolean
+        default: true
+      publish_main:
+        description: 'Publish laya-system-one itself'
+        type: boolean
+        default: true
+
+env:
+  npm_config_fund: 'false'
+  npm_config_audit: 'false'
+
+jobs:
+  preflight:
+    name: validate package completeness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --ignore-scripts
+
+      - name: Restore native binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/bin
+          pattern: '*-*'
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Strict preflight (all platform binaries must ship)
+        run: node tools/preflight-publish.js
+
+      - name: Test suite
+        run: |
+          npm run lint
+          npm run test:unit
+          npm run test:packaging
+
+  chunks:
+    name: publish model chunk packages
+    if: ${{ inputs.publish_chunks }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --ignore-scripts
+
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire model
+        run: npm run model:acquire
+
+      - name: Build chunk packages
+        run: npm run model:chunks -- --chunk-mb 24 --model-version 1.0.0
+
+      - name: Publish chunks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            node tools/model-chunks.js publish --dry-run
+          else
+            node tools/model-chunks.js publish
+          fi
+
+  main:
+    name: publish laya-system-one
+    if: ${{ inputs.publish_main }}
+    needs: [preflight, chunks]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci --ignore-scripts
+
+      - name: Restore native binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/bin
+          pattern: '*-*'
+          merge-multiple: true
+
+      - name: Restore model (for the manifest + tokenizer checks)
+        uses: actions/cache@v4
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm publish --dry-run --access public
+          else
+            npm publish --access public
+          fi

@@ -1,0 +1,8 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-macos, x86_64-macos ]
+install-name:    '/System/Library/Frameworks/CoreML.framework/CoreML'
+current-version: 1
+exports:
+  - targets:         [ arm64-macos, x86_64-macos ]
+    objc-classes:    [ MLComputePlan, MLDictionaryFeatureProvider, MLFeatureValue, MLModel, MLModelConfiguration, MLMultiArray, MLOptimizationHints, MLPredictionOptions ]

@@ -1,0 +1,4 @@
+# wasm-pkg EH commitado (binario universal ~13MB, necessario em runtime).
+# Este arquivo existe so para ignorar temporarios de build.
+*.tmp
+*.log

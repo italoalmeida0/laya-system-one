@@ -1,0 +1,8 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-macos, x86_64-macos ]
+install-name:    '/usr/lib/libobjc.dylib'
+current-version: 1
+exports:
+  - targets:         [ arm64-macos, x86_64-macos ]
+    symbols:         [ _objc_alloc, _objc_alloc_init, _objc_autoreleasePoolPop, _objc_autoreleasePoolPush, _objc_autoreleaseReturnValue, _objc_enumerationMutation, _objc_msgSend, _objc_msgSend_stret, _objc_msgSendSuper, _objc_release, _objc_retain, _objc_retainAutorelease, _objc_retainAutoreleasedReturnValue, _objc_storeStrong, _objc_loadWeak, _objc_initWeak, _objc_destroyWeak, _objc_copyWeak, _objc_moveWeak, _sel_registerName, _objc_getClass, _objc_lookUpClass, ___CFConstantStringClassReference ]

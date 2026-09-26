@@ -1,0 +1,8 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-macos, x86_64-macos ]
+install-name:    '/usr/lib/libiconv.dylib'
+current-version: 1
+exports:
+  - targets:         [ arm64-macos, x86_64-macos ]
+    symbols:         [ _iconv, _iconv_open, _iconv_close, _libiconv_set_relocation_prefix, _locale_charset ]

@@ -1,9 +1,12 @@
 import ortNode from 'onnxruntime-node';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function benchmark(epName) {
   try {
-    const sess = await ortNode.InferenceSession.create(path.resolve('models/model.onnx'), {
+    const sess = await ortNode.InferenceSession.create(path.join(ROOT, 'models', 'model.onnx'), {
       executionProviders: [epName]
     });
 

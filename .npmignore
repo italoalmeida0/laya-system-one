@@ -1,7 +1,11 @@
 node_modules/
 .git/
-test.js
-benchmark_gpu.js
+tools/
+tests/
+native/
+examples/
 *.log
 *.tgz
 models/model.onnx
+.env
+dist/bin/linux-*-musl/lib/

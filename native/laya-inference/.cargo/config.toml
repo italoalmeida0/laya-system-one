@@ -1,0 +1,14 @@
+# tract-linalg ships .S asm kernels that MSVC cl.exe cannot assemble.
+# Force clang-cl (LLVM, understands ARM64 asm incl. `;` comments) as the C
+# compiler and llvm-lib as the archiver for the msvc target.
+# NOTE: cargo config `target.<triple>.env` is not a thing — these must be
+# real env vars, so export them (or rely on this file being sourced):
+#   $env:CC_aarch64_pc_windows_msvc = "clang-cl"
+#   $env:AR_aarch64_pc_windows_msvc = "llvm-lib"
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld"
+
+# wasm32: SIMD128 + bulk-memory + nontrapping-fptoint for tract matmuls.
+# NOTE: SIMD128 needs BigInt64Array-free i64-free hot paths; kept for f32.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128,+bulk-memory,+nontrapping-fptoint,+mutable-globals,+sign-ext"]

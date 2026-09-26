@@ -1,4 +1,4 @@
-import { Laya, serve } from './src/index.js';
+import { Laya, serve } from '../src/index.js';
 
 async function runTests() {
   console.log('='.repeat(65));

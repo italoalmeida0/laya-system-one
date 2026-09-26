@@ -1,0 +1,39 @@
+[package]
+name = "laya-serve"
+version = "0.1.0"
+edition = "2021"
+description = "Self-contained laya-system-one HTTP server: Axum + tokenizers + ONNX Runtime (statically linked). Zero runtime deps (musl) or libc-only (glibc)."
+license = "Apache-2.0"
+
+[[bin]]
+name = "laya-serve"
+path = "src/main.rs"
+
+[dependencies]
+# ONNX Runtime (downloads prebuilt C libs at build time, links statically)
+ort = { version = "2.0.0-rc.10", features = ["half"] }
+# HF tokenizers with fancy-regex (pure Rust) instead of onig (onig_sys
+# bundles+compiles C code — breaks cross builds; our tokenizer.json needs
+# no regex anyway: Metaspace + BPE only). Drops: progressbar, esaxx_fast.
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+# HTTP server + JSON
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# CLI args
+clap = { version = "4", features = ["derive"] }
+
+[build-dependencies]
+cc = "1"
+# Fast base64 not needed; keep minimal.
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

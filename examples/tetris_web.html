@@ -1,119 +1,137 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Laya System-One — Autonomous Tetris Player</title>
+  <title>Laya System-One — Arcade Tetris Live</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
-    @keyframes pulse-glow {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.8; transform: scale(1.02); }
-    }
-    .flash-line {
-      animation: flash 0.25s linear infinite;
-    }
-    @keyframes flash {
-      0%, 100% { filter: brightness(1); }
-      50% { filter: brightness(2.5); }
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
     }
   </style>
 </head>
 <body class="bg-[var(--background)] text-[var(--foreground)] min-h-screen p-4 font-sans select-none">
 
-  <!-- TOP HEADER & SERVER CONNECTION -->
+  <!-- TOP HEADER -->
   <header class="max-w-6xl mx-auto mb-4 bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xl border border-indigo-500/30">
-          ⚡
+          🎮
         </div>
         <div>
           <h1 class="text-xl font-bold tracking-tight flex items-center gap-2">
             Laya System-One
             <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono border border-emerald-500/30">
-              Tetris Autonomous Agent
+              Arcade Tetris (Live Falling Pieces)
             </span>
           </h1>
           <p class="text-xs text-[var(--muted-foreground)]">
-            Decisões em tempo real via protocolo wire TypeSafe Jev (<code class="font-mono text-indigo-400">POST /v1/systemone</code>)
+            Pieces fall in real time while System-1 AI evaluates placements via <code class="font-mono text-indigo-400">POST /v1/systemone</code>
           </p>
         </div>
       </div>
 
-      <!-- SERVER URL CONFIG -->
-      <div class="flex items-center gap-2 bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-1.5 text-xs">
-        <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></div>
-        <span class="text-[var(--muted-foreground)]">Servidor:</span>
-        <input id="serverUrlInput" type="text" value="http://localhost:8990" 
-               class="bg-transparent border-none outline-none font-mono text-[var(--foreground)] w-44" />
-        <button id="btnConnect" onclick="checkConnection()" 
-                class="px-2 py-1 rounded bg-[var(--border)] hover:bg-indigo-600 hover:text-white transition font-medium">
-          Verificar
+      <!-- SERVER & API KEY CONFIG (LOCAL LAYA VS OPENROUTER JEV VS CLOUD JEV) -->
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <div class="flex items-center gap-1.5 bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5">
+          <div id="statusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+          <span class="text-[var(--muted-foreground)] font-medium">Target:</span>
+          <select id="serverPresetSelect" onchange="applyServerPreset()" class="bg-transparent text-[var(--foreground)] border-none outline-none font-sans text-xs cursor-pointer font-semibold">
+            <option value="openrouter">OpenRouter (Jev 1.13 🚀)</option>
+            <option value="local" selected>Local (Laya ⚡)</option>
+            <option value="cloud">Cloud (TypeSafe Jev ☁️)</option>
+            <option value="custom">Custom URL</option>
+          </select>
+          <input id="serverUrlInput" type="text" value="http://localhost:8080" oninput="onUrlChange()"
+                 class="bg-transparent border-none outline-none font-mono text-[var(--foreground)] w-56 text-xs ml-1 border-l border-[var(--border)] pl-1.5" />
+        </div>
+
+        <div class="flex items-center gap-1.5 bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5">
+          <span class="text-[var(--muted-foreground)] font-medium">🔑 Token:</span>
+          <input id="apiKeyInput" type="password" placeholder="sk-or-v1-... (Bearer token)" 
+                 class="bg-transparent border-none outline-none font-mono text-[var(--foreground)] w-44 text-xs" 
+                 oninput="saveApiKey()" />
+          <button onclick="toggleKeyVisibility()" id="btnKeyEye" class="text-slate-400 hover:text-white px-0.5 text-xs">👁️</button>
+        </div>
+
+        <button onclick="checkConnection()" 
+                class="px-2.5 py-1.5 rounded-lg bg-[var(--border)] hover:bg-indigo-600 hover:text-white transition font-medium text-xs">
+          Test
         </button>
       </div>
     </div>
   </header>
 
-  <!-- MAIN INTERFACE -->
+  <!-- MAIN VIEW -->
   <main class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4">
 
-    <!-- LEFT COLUMN: TETRIS CANVAS & CONTROLS (5 cols) -->
+    <!-- LEFT: TETRIS GAME CANVAS & CONTROLS (5 cols) -->
     <div class="lg:col-span-5 flex flex-col gap-4">
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col items-center">
         
-        <!-- CANVAS CONTAINER -->
-        <div class="relative bg-slate-950 rounded-lg p-2 border-2 border-slate-800 shadow-inner">
+        <!-- CANVAS -->
+        <div class="relative bg-slate-950 rounded-lg p-2 border-2 border-slate-800 shadow-2xl">
           <canvas id="tetrisCanvas" width="240" height="432" class="rounded block"></canvas>
-          <div id="canvasOverlay" class="absolute inset-0 bg-black/60 rounded flex flex-col items-center justify-center gap-2 opacity-0 pointer-events-none transition-opacity">
-            <span id="overlayText" class="text-lg font-bold text-white tracking-wider">PAUSADO</span>
+          <div id="canvasOverlay" class="absolute inset-0 bg-black/75 rounded flex flex-col items-center justify-center gap-3 opacity-0 pointer-events-none transition-opacity">
+            <span id="overlayText" class="text-xl font-bold text-white tracking-wider">PAUSED</span>
+            <button onclick="toggleGame()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow pointer-events-auto">
+              Resume
+            </button>
           </div>
         </div>
 
         <!-- CONTROLS -->
         <div class="w-full mt-4 flex flex-col gap-3">
           <div class="grid grid-cols-3 gap-2">
-            <button id="btnPlayPause" onclick="toggleAutoPlay()" 
+            <button id="btnPlayPause" onclick="toggleGame()" 
                     class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow transition active:scale-95">
-              <span id="playIcon">▶️</span> <span id="playText">Auto Play</span>
+              <span id="playIcon">▶️</span> <span id="playText">Start Game</span>
             </button>
-            <button id="btnStep" onclick="stepGame()" 
+            <button onclick="dropImmediately()" 
                     class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-[var(--border)] hover:bg-[var(--border)]/80 text-[var(--foreground)] transition active:scale-95">
-              <span>⏭️</span> Passo a Passo
+              <span>⚡</span> Hard Drop
             </button>
             <button onclick="resetGame()" 
                     class="py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition active:scale-95">
-              <span>🔄</span> Reiniciar
+              <span>🔄</span> Reset
             </button>
           </div>
 
-          <!-- SPEED SELECTOR -->
+          <!-- SPEED & SOUND -->
           <div class="flex items-center justify-between text-xs text-[var(--muted-foreground)] bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
-            <span>Velocidade:</span>
-            <div class="flex gap-1">
-              <button onclick="setSpeed(1200, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Lenta</button>
-              <button onclick="setSpeed(600, this)" class="speed-btn px-2 py-1 rounded bg-indigo-600 text-white font-mono">Normal</button>
-              <button onclick="setSpeed(200, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Rápida</button>
+            <div class="flex items-center gap-2">
+              <span>Speed:</span>
+              <div class="flex gap-1">
+                <button onclick="setSpeed(280, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Slow</button>
+                <button onclick="setSpeed(140, this)" class="speed-btn px-2 py-1 rounded bg-indigo-600 text-white font-mono">Normal</button>
+                <button onclick="setSpeed(50, this)" class="speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono">Fast</button>
+              </div>
             </div>
+            <button id="btnSound" onclick="toggleSound()" class="px-2 py-1 rounded bg-[var(--border)] hover:text-white transition">
+              🔊 Sound
+            </button>
           </div>
         </div>
 
-        <!-- GAME STATS STRIP -->
+        <!-- STATS -->
         <div class="w-full mt-4 grid grid-cols-4 gap-2 text-center text-xs">
           <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
-            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Pontos</div>
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Score</div>
             <div id="scoreVal" class="text-base font-bold text-amber-400 font-mono mt-0.5">0</div>
           </div>
           <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
-            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Linhas</div>
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Lines</div>
             <div id="linesVal" class="text-base font-bold text-emerald-400 font-mono mt-0.5">0</div>
           </div>
           <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
-            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Altura</div>
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Height</div>
             <div id="heightVal" class="text-base font-bold text-cyan-400 font-mono mt-0.5">0/18</div>
           </div>
           <div class="bg-[var(--background)] p-2 rounded-lg border border-[var(--border)]">
-            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Próxima</div>
+            <div class="text-[var(--muted-foreground)] text-[10px] uppercase font-bold tracking-wider">Next</div>
             <div id="nextPieceVal" class="text-base font-bold text-fuchsia-400 font-mono mt-0.5">-</div>
           </div>
         </div>
@@ -121,7 +139,7 @@
       </div>
     </div>
 
-    <!-- RIGHT COLUMN: LAYA SYSTEM-1 AI INSPECTOR (7 cols) -->
+    <!-- RIGHT: AI DECISION INSPECTOR (7 cols) -->
     <div class="lg:col-span-7 flex flex-col gap-4">
 
       <!-- LIVE DECISION CARD -->
@@ -129,10 +147,10 @@
         <div class="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
           <div class="flex items-center gap-2">
             <div class="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-ping"></div>
-            <h2 class="text-sm font-bold tracking-tight">Inspeção da Decisão ao Vivo</h2>
+            <h2 class="text-sm font-bold tracking-tight">System-1 Decision (Real-Time Fall)</h2>
           </div>
           <div class="flex items-center gap-2">
-            <span class="text-xs text-[var(--muted-foreground)]">Latência HTTP:</span>
+            <span class="text-xs text-[var(--muted-foreground)]">HTTP Latency:</span>
             <span id="latencyBadge" class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
               -- ms
             </span>
@@ -142,34 +160,32 @@
         <!-- SELECTED MOVE HERO -->
         <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-3 flex flex-col gap-2">
           <div class="flex items-center justify-between text-xs">
-            <span class="text-[var(--muted-foreground)]">Movimento Selecionado:</span>
-            <span id="decisionConfidence" class="font-mono text-xs text-indigo-400 font-semibold">Confiança: --%</span>
+            <span class="text-[var(--muted-foreground)]">Placement Chosen by AI:</span>
+            <span id="decisionConfidence" class="font-mono text-xs text-indigo-400 font-semibold">Confidence: --%</span>
           </div>
           <div id="decisionName" class="text-base font-bold text-emerald-400 font-mono">
-            Aguardando início do jogo...
+            Press "Start Game" to watch pieces drop
           </div>
           <p id="decisionDesc" class="text-xs text-[var(--muted-foreground)] italic">
-            O agente consultará o servidor Laya HTTP a cada peça caída.
+            The active piece hovers at spawn while AI evaluates the optimal placement, then drops smoothly.
           </p>
         </div>
 
         <!-- RISK METRICS -->
         <div class="grid grid-cols-2 gap-3 text-xs">
-          <!-- Danger score -->
           <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5 flex flex-col gap-1.5">
             <div class="flex justify-between items-center">
-              <span class="text-[var(--muted-foreground)]">Nível de Perigo (Score):</span>
+              <span class="text-[var(--muted-foreground)]">Danger Level (Score):</span>
               <span id="dangerScoreText" class="font-mono font-bold text-amber-400">0.0 / 2.0</span>
             </div>
             <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-              <div id="dangerBar" class="bg-amber-400 h-full rounded-full transition-all duration-300" style="width: 10%"></div>
+              <div id="dangerBar" class="bg-amber-400 h-full rounded-full transition-all duration-300" style="width: 5%"></div>
             </div>
           </div>
 
-          <!-- Imminent Loss (noul) -->
           <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg p-2.5 flex flex-col gap-1.5">
             <div class="flex justify-between items-center">
-              <span class="text-[var(--muted-foreground)]">Risco de Derrota (Noul):</span>
+              <span class="text-[var(--muted-foreground)]">Loss Risk (Noul):</span>
               <span id="lossRiskText" class="font-mono font-bold text-cyan-400">0.0%</span>
             </div>
             <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
@@ -181,11 +197,11 @@
         <!-- CANDIDATES COMPARISON TABLE -->
         <div class="mt-1">
           <div class="text-xs font-semibold text-[var(--muted-foreground)] mb-1.5 flex justify-between">
-            <span>Candidatos Avaliados pelo Laya:</span>
-            <span class="text-[10px] text-indigo-400">Distribuição Softmax</span>
+            <span>Evaluated Candidates:</span>
+            <span class="text-[10px] text-indigo-400">Calculated Probabilities</span>
           </div>
           <div id="candidatesList" class="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
-            <div class="text-xs text-[var(--muted-foreground)] p-2 text-center">Nenhum candidato ainda.</div>
+            <div class="text-xs text-[var(--muted-foreground)] p-2 text-center">Waiting for piece...</div>
           </div>
         </div>
 
@@ -193,9 +209,25 @@
 
       <!-- DECISION HISTORY LOG -->
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm flex flex-col gap-2">
-        <h3 class="text-xs font-bold text-[var(--muted-foreground)] uppercase tracking-wider">Histórico de Decisões HTTP</h3>
-        <div id="historyLog" class="flex flex-col gap-1 font-mono text-[11px] max-h-36 overflow-y-auto pr-1">
-          <div class="text-[var(--muted-foreground)] italic">Pronto para iniciar.</div>
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider flex items-center gap-1.5">
+            <span>📡</span> HTTP Request & Decision Log
+          </h3>
+          <div class="flex items-center gap-1.5">
+            <button id="btnCopyLogs" onclick="copyAllLogs()" 
+                    class="px-2 py-1 rounded bg-[var(--border)] hover:bg-indigo-600 hover:text-white transition text-xs font-medium flex items-center gap-1">
+              <span>📋</span> <span id="copyBtnText">Copy Logs</span>
+            </button>
+            <button onclick="clearLogs()" 
+                    class="px-2 py-1 rounded bg-[var(--border)] hover:bg-rose-600 hover:text-white transition text-xs font-medium">
+              🗑️ Clear
+            </button>
+          </div>
+        </div>
+        <div id="historyLog" 
+             style="font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; line-height: 1.5;"
+             class="bg-slate-950 text-slate-200 border border-slate-800 rounded-lg p-2.5 flex flex-col gap-1 max-h-48 overflow-y-auto select-text shadow-inner">
+          <div class="text-slate-400 italic">Server ready at http://localhost:8080</div>
         </div>
       </div>
 
@@ -203,20 +235,20 @@
 
   </main>
 
-  <!-- JAVASCRIPT: TETRIS & HTTP CLIENT -->
+  <!-- ARCADE TETRIS SCRIPT WITH REAL FALLING ANIMATION -->
   <script>
     const COLS = 10;
     const ROWS = 18;
     const BLOCK_SIZE = 24;
 
     const PIECES = {
-      I: { shape: [[[1,1,1,1]], [[1],[1],[1],[1]]], color: '#38bdf8' },
-      O: { shape: [[[1,1],[1,1]]], color: '#facc15' },
-      T: { shape: [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[1,1,1],[0,1,0]], [[0,1],[1,1],[0,1]]], color: '#c084fc' },
-      L: { shape: [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]], color: '#fb923c' },
-      J: { shape: [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]], color: '#60a5fa' },
-      S: { shape: [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]], color: '#4ade80' },
-      Z: { shape: [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]], color: '#f87171' }
+      I: { shapes: [[[1,1,1,1]], [[1],[1],[1],[1]]], color: '#38bdf8' },
+      O: { shapes: [[[1,1],[1,1]]], color: '#facc15' },
+      T: { shapes: [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[1,1,1],[0,1,0]], [[0,1],[1,1],[0,1]]], color: '#c084fc' },
+      L: { shapes: [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]], color: '#fb923c' },
+      J: { shapes: [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]], color: '#60a5fa' },
+      S: { shapes: [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]], color: '#4ade80' },
+      Z: { shapes: [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]], color: '#f87171' }
     };
     const PIECE_KEYS = Object.keys(PIECES);
 
@@ -224,128 +256,639 @@
     let score = 0;
     let linesCleared = 0;
     let turnCount = 0;
-    let nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
 
-    let isAutoPlaying = false;
-    let autoPlayTimer = null;
-    let speedDelay = 600;
-    let serverConnected = false;
+    // SYNCHRONIZATION & GENERATION GUARDS
+    let currentSessionId = 1;
+    let pieceCounter = 0;
+    let inFlightAbort = null;
+
+    // ACTIVE FALLING PIECE STATE
+    let activePiece = null;
+    let nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
+    let targetAI = null; // { col, rotIdx, desc, candidate }
+
+    // GAME LOOP TIMERS
+    let isRunning = false;
+    let gameTimer = null;
+    let fallSpeedMs = 140; // Fall step interval
+    let soundEnabled = true;
 
     const canvas = document.getElementById('tetrisCanvas');
     const ctx = canvas.getContext('2d');
 
-    // INITIAL SETUP
+    // AUDIO SYNTHESIZER (ZERO EXTERNAL ASSETS)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playBeep(freq = 440, type = 'sine', duration = 0.08) {
+      if (!soundEnabled || !audioCtx) return;
+      try {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      document.getElementById('btnSound').innerText = soundEnabled ? '🔊 Sound' : '🔇 Mute';
+    }
+
+    // INITIALIZATION
     function init() {
-      // Seed a few puzzle blocks on bottom row
+      loadSavedApiKey();
+      // Seed a few puzzle blocks on bottom rows
       board[ROWS - 1] = [1, 1, 1, 1, 1, 1, 0, 1, 1, 1];
       board[ROWS - 2] = [1, 0, 1, 1, 0, 1, 0, 1, 0, 1];
-      drawBoard();
+      render();
       checkConnection();
     }
 
-    // CHECK SERVER CONNECTION
+    function applyServerPreset(doCheck = true) {
+      const preset = document.getElementById('serverPresetSelect').value;
+      localStorage.setItem('systemone_preset', preset);
+      const urlInput = document.getElementById('serverUrlInput');
+      if (preset === 'openrouter') {
+        urlInput.value = 'https://openrouter.ai/api/alpha/decisions';
+      } else if (preset === 'local') {
+        urlInput.value = 'http://localhost:8080';
+      } else if (preset === 'cloud') {
+        urlInput.value = 'https://api.typesafe.ai';
+      }
+      if (doCheck) checkConnection();
+    }
+
+    function onUrlChange() {
+      const url = document.getElementById('serverUrlInput').value.trim();
+      const presetSelect = document.getElementById('serverPresetSelect');
+      if (url.includes('openrouter.ai')) {
+        presetSelect.value = 'openrouter';
+      } else if (url.includes('localhost:8080') || url.includes('127.0.0.1:8080')) {
+        presetSelect.value = 'local';
+      } else if (url.includes('typesafe.ai')) {
+        presetSelect.value = 'cloud';
+      } else {
+        presetSelect.value = 'custom';
+      }
+    }
+
+    function saveApiKey() {
+      const key = document.getElementById('apiKeyInput').value;
+      localStorage.setItem('openrouter_token', key);
+      localStorage.setItem('systemone_api_key', key);
+      localStorage.setItem('jev_api_key', key);
+    }
+
+    function loadSavedApiKey() {
+      const savedKey = localStorage.getItem('openrouter_token') || localStorage.getItem('systemone_api_key') || localStorage.getItem('jev_api_key');
+      if (savedKey) {
+        document.getElementById('apiKeyInput').value = savedKey;
+      }
+      const savedPreset = localStorage.getItem('systemone_preset');
+      if (savedPreset) {
+        document.getElementById('serverPresetSelect').value = savedPreset;
+        applyServerPreset(false);
+      }
+    }
+
+    function toggleKeyVisibility() {
+      const inp = document.getElementById('apiKeyInput');
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+      document.getElementById('btnKeyEye').innerText = inp.type === 'password' ? '👁️' : '🔒';
+    }
+
     async function checkConnection() {
       const url = document.getElementById('serverUrlInput').value.trim();
+      const apiKey = document.getElementById('apiKeyInput').value.trim();
       const dot = document.getElementById('statusDot');
+      const isOpenRouter = url.includes('openrouter.ai');
+      const isCloudJev = url.includes('typesafe.ai') && !isOpenRouter;
+
+      const headers = {};
+      if (apiKey) {
+        headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+      }
+
       try {
-        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
-          const data = await res.json();
-          dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
-          serverConnected = true;
-          logMessage(`✓ Servidor conectado: ${data.model} (${url})`);
+        if (isOpenRouter) {
+          logMessage(`Testing OpenRouter Decisions (${url})...`);
+          if (!apiKey) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+            logMessage(`⚠️ OpenRouter: Enter your token in the 🔑 Token field.`);
+            return;
+          }
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({
+              model: 'typesafe/jev-1.13',
+              state: 'ping probe',
+              questions: { ping: { type: 'noul', instructions: 'is alive?', criteria: { "true": "yes", "false": "no" } } }
+            }),
+            signal: AbortSignal.timeout(6000)
+          });
+          if (res.ok) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+            logMessage(`✓ Connected to OpenRouter (Jev 1.13) successfully! 🚀`);
+          } else if (res.status === 401 || res.status === 403) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+            const data = await res.json().catch(() => ({}));
+            const msg = (data && data.error && data.error.message) ? data.error.message : `HTTP ${res.status}`;
+            logMessage(`⚠️ OpenRouter: Authentication error (${msg}). Check your key.`);
+          } else {
+            const data = await res.json().catch(() => ({}));
+            throw new Error((data && data.error && data.error.message) ? data.error.message : `HTTP ${res.status}`);
+          }
+        } else if (isCloudJev) {
+          logMessage(`Testing TypeSafe Jev Cloud (${url})...`);
+          const endpoint = url.endsWith('/v1/systemone') ? url : `${url.replace(/\/+$/, '')}/v1/systemone`;
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify({
+              model: 'jev-latest',
+              state: 'ping probe',
+              questions: { ping: { type: 'noul', instructions: 'is alive?', criteria: { "true": "yes", "false": "no" } } }
+            }),
+            signal: AbortSignal.timeout(4000)
+          });
+          if (res.ok) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+            logMessage(`✓ Connected to official TypeSafe Jev Cloud ☁️`);
+          } else if (res.status === 401) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+            logMessage(`⚠️ TypeSafe Jev (Cloud): Error 401 Unauthorized. Provide a valid API key.`);
+          } else {
+            throw new Error(`HTTP ${res.status}`);
+          }
         } else {
-          throw new Error('Status not 200');
+          // Local Laya server
+          const healthUrl = url.endsWith('/v1/systemone') ? url.replace('/v1/systemone', '/health') : `${url.replace(/\/+$/, '')}/health`;
+          const res = await fetch(healthUrl, { headers, signal: AbortSignal.timeout(2000) });
+          if (res.ok) {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+            logMessage(`✓ Local Laya server connected at ${url} ⚡`);
+          } else {
+            throw new Error('Status not 200');
+          }
         }
       } catch (err) {
         dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
-        serverConnected = false;
-        logMessage(`⚠️ Servidor inacessível em ${url}. Verifique se o servidor está ativo.`);
+        logMessage(`⚠️ Could not connect to ${url} (${err.message}).`);
       }
     }
 
-    // DRAW TETRIS BOARD
-    function drawBoard(ghostCandidate = null) {
-      ctx.fillStyle = '#020617';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Grid lines
-      ctx.strokeStyle = '#1e293b';
-      ctx.lineWidth = 0.5;
-      for (let c = 0; c <= COLS; c++) {
-        ctx.beginPath();
-        ctx.moveTo(c * BLOCK_SIZE, 0);
-        ctx.lineTo(c * BLOCK_SIZE, ROWS * BLOCK_SIZE);
-        ctx.stroke();
+    // CANCEL ANY IN-FLIGHT HTTP REQUEST
+    function cancelInFlightAI() {
+      if (inFlightAbort) {
+        try { inFlightAbort.abort(); } catch(e) {}
+        inFlightAbort = null;
       }
-      for (let r = 0; r <= ROWS; r++) {
-        ctx.beginPath();
-        ctx.moveTo(0, r * BLOCK_SIZE);
-        ctx.lineTo(COLS * BLOCK_SIZE, r * BLOCK_SIZE);
-        ctx.stroke();
-      }
+    }
 
-      // Draw blocks
-      for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-          if (board[r][c] !== 0) {
-            drawBlock(c, r, typeof board[r][c] === 'string' ? board[r][c] : '#818cf8');
-          }
-        }
-      }
+    // SPAWN PIECE AT TOP OF BOARD
+    async function spawnNewPiece() {
+      if (!isRunning) return;
 
-      // Draw Ghost piece preview if supplied
-      if (ghostCandidate) {
-        const shape = ghostCandidate.shape;
-        const col = ghostCandidate.col;
-        const row = ghostCandidate.result.row;
-        const color = PIECES[ghostCandidate.pieceKey]?.color || '#ffffff';
+      cancelInFlightAI();
+      targetAI = null;
 
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.fillStyle = color + '33'; // translucent
+      const key = nextPieceKey;
+      nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
+      const shapes = PIECES[key].shapes;
+      const initialShape = shapes[0];
+      const startCol = Math.floor((COLS - initialShape[0].length) / 2);
 
-        for (let r = 0; r < shape.length; r++) {
-          for (let c = 0; c < shape[0].length; c++) {
-            if (shape[r][c]) {
-              const x = (col + c) * BLOCK_SIZE;
-              const y = (row + r) * BLOCK_SIZE;
-              ctx.fillRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
-              ctx.strokeRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
-            }
-          }
-        }
+      const pieceId = ++pieceCounter;
+      activePiece = {
+        id: pieceId,
+        key,
+        color: PIECES[key].color,
+        shapes,
+        rotIdx: 0,
+        shape: initialShape,
+        col: startCol,
+        row: 0,
+        spawnTime: performance.now(),
+        hadAIDecision: false
+      };
+
+      // Check collision on spawn (Game Over)
+      if (!canPlace(board, activePiece.shape, activePiece.row, activePiece.col)) {
+        gameOver();
+        return;
       }
 
-      // Update UI Stats
-      document.getElementById('scoreVal').innerText = score;
-      document.getElementById('linesVal').innerText = linesCleared;
+      // Query System-One asynchronously
+      queryLayaForMove(activePiece);
+      render();
+    }
+
+    // BOARD SNAPSHOT FOR THE AI: compact top-down view + metrics so it
+    // decides with vision instead of blind (piece + max height only).
+    function describeBoardForAI(piece) {
       const heights = getColumnHeights(board);
       const maxH = Math.max(...heights);
-      document.getElementById('heightVal').innerText = `${maxH}/${ROWS}`;
-      document.getElementById('nextPieceVal').innerText = nextPieceKey;
+      const holes = countHoles(board);
+      // Skip leading empty rows to save tokens; keep at least 4 visible rows.
+      let firstUsed = board.findIndex(r => r.some(c => c !== 0));
+      if (firstUsed === -1) firstUsed = ROWS - 4;
+      firstUsed = Math.min(firstUsed, ROWS - 4);
+      const rows = [];
+      for (let r = firstUsed; r < ROWS; r++) {
+        rows.push(board[r].map(c => (c !== 0 ? '#' : '.')).join(''));
+      }
+      return {
+        heights, maxH, holes,
+        text: `Piece ${piece.key} falling (next: ${nextPieceKey}) | Score ${score}, Lines ${linesCleared}\n` +
+          `Board top-down (.=empty #=filled, showing rows ${firstUsed}-${ROWS - 1}):\n${rows.join('\n')}\n` +
+          `Column heights [${heights.join(',')}] max=${maxH}/${ROWS}, holes=${holes}`
+      };
     }
 
-    function drawBlock(c, r, color) {
-      const x = c * BLOCK_SIZE;
-      const y = r * BLOCK_SIZE;
-      ctx.fillStyle = color;
-      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
+    // QUERY DECISION ENGINE WITH SYNCHRONIZATION GUARDS
+    async function queryLayaForMove(piece) {
+      const reqSession = currentSessionId;
+      const reqPieceId = piece.id;
 
-      // Inner highlight
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
-      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, 3);
-      ctx.fillRect(x + 1, y + 1, 3, BLOCK_SIZE - 2);
+      const allCandidates = generateCandidateMoves(piece.key);
+      if (allCandidates.length === 0) return;
 
-      // Inner shadow
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-      ctx.fillRect(x + 1, y + BLOCK_SIZE - 4, BLOCK_SIZE - 2, 3);
-      ctx.fillRect(x + BLOCK_SIZE - 4, y + 1, 3, BLOCK_SIZE - 2);
+      const candidates = allCandidates.slice(0, 5);
+      const criteriaMap = {};
+      candidates.forEach(c => criteriaMap[c.id] = c.description);
+      // Escape hatch: lets the AI say "not sure" instead of guessing blind.
+      // If picked, we retry (up to 3x) and use the last answer.
+      const UNSURE_ID = 'unsure_retry';
+      criteriaMap[UNSURE_ID] = 'None of these placements look clearly good (board is risky or options are tied). Answer: not sure, ask me again.';
+
+      const heights = getColumnHeights(board);
+      const maxH = Math.max(...heights);
+      const snap = describeBoardForAI(piece);
+      
+      const rawUrl = document.getElementById('serverUrlInput').value.trim();
+      const apiKey = document.getElementById('apiKeyInput').value.trim();
+      const isOpenRouter = rawUrl.includes('openrouter.ai');
+      const isCloudJev = rawUrl.includes('typesafe.ai') && !isOpenRouter;
+      
+      let endpoint = rawUrl;
+      let modelName = 'laya-multilingual';
+      let providerLabel = 'Laya Local';
+
+      if (isOpenRouter) {
+        endpoint = rawUrl;
+        modelName = 'typesafe/jev-1.13';
+        providerLabel = 'OpenRouter (Jev 1.13)';
+      } else if (isCloudJev) {
+        endpoint = rawUrl.endsWith('/v1/systemone') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/v1/systemone`;
+        modelName = 'jev-latest';
+        providerLabel = 'TypeSafe Jev Cloud';
+      } else {
+        endpoint = rawUrl.endsWith('/v1/systemone') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/v1/systemone`;
+        modelName = 'laya-multilingual';
+        providerLabel = 'Laya Local';
+      }
+
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKey) {
+        headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+      }
+
+      const payload = {
+        model: modelName,
+        state: snap.text,
+        questions: {
+          move: {
+            type: 'choice',
+            instructions: 'You play Tetris. Each criterion is a legal landing spot (column + rotation) with its outcome: lines cleared, holes remaining, surface flatness, resulting height. Priority: (1) clear lines, (2) leave zero holes, (3) keep the surface flat and low. Pick the placement id with the best outcome. If no placement is clearly better than the others (tied outcomes or risky board), pick unsure_retry instead of guessing.',
+            criteria: criteriaMap
+          }
+        }
+      };
+
+      cancelInFlightAI();
+      inFlightAbort = new AbortController();
+
+      const t0 = performance.now();
+      let decisionData = null;
+      let latencyMs = 0;
+      let attempts = 0;
+      const MAX_ATTEMPTS = 3;
+
+      // Retry loop: if the AI answers "unsure", ask again (fresh board
+      // snapshot each time) up to 3x, then use the last answer.
+      while (attempts < MAX_ATTEMPTS) {
+        attempts++;
+        // Abort if piece locked / session changed mid-retry.
+        if (currentSessionId !== reqSession || !isRunning) return;
+        if (!activePiece || activePiece.id !== reqPieceId) return;
+        if (attempts > 1) {
+          const fresh = describeBoardForAI(piece);
+          payload.state = fresh.text;
+          logMessage(`🔁 RETRY ${attempts}/${MAX_ATTEMPTS}: AI was unsure, asking again...`);
+        }
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+            signal: inFlightAbort.signal
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            const errMsg = (errData && errData.error && errData.error.message) ? errData.error.message : (errData && errData.detail && errData.detail.message ? errData.detail.message : `HTTP ${res.status}`);
+            throw new Error(errMsg);
+          }
+          decisionData = await res.json();
+        } catch (err) {
+          latencyMs = performance.now() - t0;
+          if (err.name === 'AbortError') {
+            const fallTime = (performance.now() - piece.spawnTime).toFixed(0);
+            logMessage(`⏱️ CANCELED: Piece [${piece.key}] locked in ${fallTime}ms before ${providerLabel} responded. Piece did not move.`);
+            return;
+          }
+          logMessage(`❌ FAILED: ${providerLabel} took ${latencyMs.toFixed(0)}ms and failed (${err.message}). Piece [${piece.key}] did not move.`);
+          return;
+        }
+        const gotId = decisionData && decisionData.answers && decisionData.answers.move
+          ? decisionData.answers.move.choice : null;
+        if (gotId !== UNSURE_ID) break;
+        if (attempts >= MAX_ATTEMPTS) {
+          logMessage(`🤷 UNSURE x${attempts}: AI still unsure after ${MAX_ATTEMPTS} tries. Using emergency move.`);
+          break;
+        }
+      }
+      latencyMs = performance.now() - t0;
+
+      inFlightAbort = null;
+
+      // 🛡️ CRITICAL SYNCHRONIZATION GUARDS:
+      // 1. Has the game session changed (user clicked restart)?
+      if (currentSessionId !== reqSession) return;
+      // 2. Is the game paused or over?
+      if (!isRunning) return;
+      // 3. Has the piece already landed or been replaced?
+      if (!activePiece || activePiece.id !== reqPieceId) {
+        const fallTime = piece.lockedAt ? (piece.lockedAt - piece.spawnTime).toFixed(0) : 'window';
+        logMessage(`⏱️ TIMEOUT: ${providerLabel} took ${latencyMs.toFixed(0)}ms, but piece [${piece.key}] only had ${fallTime}ms fall window. Piece locked without moving.`);
+        return;
+      }
+
+      piece.hadAIDecision = true;
+
+      let chosenCandidate = candidates[0];
+      let confidence = 0;
+      let probMap = {};
+      let wasUnsure = false;
+
+      if (decisionData && decisionData.answers && decisionData.answers.move) {
+        const chosenId = decisionData.answers.move.choice;
+        if (chosenId === UNSURE_ID) {
+          // Unsure even after retries: emergency fallback (first candidate).
+          wasUnsure = true;
+          chosenCandidate = candidates[0];
+          confidence = 0;
+        } else {
+          chosenCandidate = candidates.find(c => c.id === chosenId) || candidates[0];
+          confidence = (decisionData.answers.move.confidence * 100).toFixed(1);
+          probMap = decisionData.answers.move.probabilities || {};
+        }
+      }
+
+      // Update AI Target for THIS active piece
+      targetAI = chosenCandidate;
+
+      // Update Risk UI
+      const dangerScore = Math.min(2.0, (maxH / ROWS) * 2.2);
+      document.getElementById('dangerScoreText').innerText = `${dangerScore.toFixed(2)} / 2.0`;
+      document.getElementById('dangerBar').style.width = `${Math.min(100, (dangerScore / 2.0) * 100)}%`;
+
+      const lossNoul = maxH > 14 ? 0.85 : (maxH > 10 ? 0.35 : 0.05);
+      document.getElementById('lossRiskText').innerText = `${(lossNoul * 100).toFixed(1)}%`;
+      document.getElementById('lossBar').style.width = `${lossNoul * 100}%`;
+
+      // Update UI
+      document.getElementById('latencyBadge').innerText = `${latencyMs.toFixed(0)} ms`;
+      document.getElementById('decisionConfidence').innerText = `Confidence: ${confidence}%`;
+      document.getElementById('decisionName').innerText = `${chosenCandidate.id} (Piece ${piece.key})`;
+      document.getElementById('decisionDesc').innerText = chosenCandidate.description;
+
+      renderCandidates(candidates, wasUnsure ? null : chosenCandidate.id, probMap);
+      logMessage(`Piece ${piece.key} -> Target: Col ${chosenCandidate.col} in ${latencyMs.toFixed(0)}ms (${providerLabel})${attempts > 1 ? ` [${attempts} tries]` : ''}${wasUnsure ? ' [unsure, emergency]' : ''} ⚡`);
+      render();
     }
 
-    // TETRIS SIMULATOR ALGORITHMS
-    function cloneBoard(b) {
-      return b.map(row => [...row]);
+    // GAME LOOP: MOVES THE FALLING PIECE
+    function gameTick() {
+      if (!isRunning) return;
+
+      if (!activePiece) {
+        spawnNewPiece();
+        return;
+      }
+
+      // 🧠 ENTRY DELAY: Wait at top (row 0) while AI calculates the target move!
+      // This prevents the piece from plummeting down the center and colliding before AI responds!
+      if (!targetAI) {
+        const waitingTime = performance.now() - activePiece.spawnTime;
+        // Safety fallback if server hangs > 2500ms
+        if (waitingTime > 2500) {
+          logMessage(`⏱️ TIMEOUT (>2.5s): AI did not respond in time for piece [${activePiece.key}]. Using emergency move.`);
+          const allCands = generateCandidateMoves(activePiece.key);
+          if (allCands.length > 0) targetAI = allCands[0];
+        }
+        render();
+        return;
+      }
+
+      // 1. Move horizontally towards AI target column (if target arrived)
+      if (activePiece.col !== targetAI.col) {
+        const stepDir = targetAI.col > activePiece.col ? 1 : -1;
+        if (canPlace(board, activePiece.shape, activePiece.row, activePiece.col + stepDir)) {
+          activePiece.col += stepDir;
+          playBeep(280, 'sine', 0.04);
+        }
+      }
+
+      // 2. Rotate towards AI target rotation (if target arrived)
+      if (activePiece.rotIdx !== targetAI.rotIdx) {
+        const nextRot = (activePiece.rotIdx + 1) % activePiece.shapes.length;
+        const nextShape = activePiece.shapes[nextRot];
+        if (canPlace(board, nextShape, activePiece.row, activePiece.col)) {
+          activePiece.rotIdx = nextRot;
+          activePiece.shape = nextShape;
+          playBeep(380, 'triangle', 0.04);
+        }
+      }
+
+      // 3. Move downwards by 1 row towards destination
+      if (canPlace(board, activePiece.shape, activePiece.row + 1, activePiece.col)) {
+        activePiece.row++;
+      } else {
+        // Lock piece onto board!
+        lockPiece(activePiece);
+      }
+
+      render();
+    }
+
+    // INSTANT DROP (DROP IMMEDIATELY BUTTON)
+    function dropImmediately() {
+      if (!activePiece) return;
+      cancelInFlightAI();
+      while (canPlace(board, activePiece.shape, activePiece.row + 1, activePiece.col)) {
+        activePiece.row++;
+      }
+      lockPiece(activePiece);
+      render();
+    }
+
+    // LOCK PIECE ONTO BOARD
+    function lockPiece(piece) {
+      piece.lockedAt = performance.now();
+      const fallDuration = (piece.lockedAt - piece.spawnTime).toFixed(0);
+
+      if (!piece.hadAIDecision) {
+        logMessage(`⏱️ TOO SLOW: Piece [${piece.key}] dropped in ${fallDuration}ms and locked without moving.`);
+      }
+
+      cancelInFlightAI();
+      targetAI = null;
+      activePiece = null;
+
+      playBeep(180, 'square', 0.1);
+      const h = piece.shape.length;
+      const w = piece.shape[0].length;
+
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          if (piece.shape[r][c]) {
+            board[piece.row + r][piece.col + c] = piece.color;
+          }
+        }
+      }
+
+      score += 10;
+
+      // Check lines
+      let cleared = 0;
+      for (let r = ROWS - 1; r >= 0; r--) {
+        if (board[r].every(cell => cell !== 0)) {
+          cleared++;
+          board.splice(r, 1);
+          board.unshift(Array(COLS).fill(0));
+          r++;
+        }
+      }
+
+      if (cleared > 0) {
+        linesCleared += cleared;
+        score += cleared * 100;
+        playBeep(620, 'sine', 0.2);
+        logMessage(`💥 LINE CLEARED! +${cleared * 100} pts (Total: ${linesCleared} lines)`);
+      }
+    }
+
+    // CANDIDATE GENERATOR
+    function generateCandidateMoves(pieceKey) {
+      const rotations = PIECES[pieceKey].shapes;
+      const color = PIECES[pieceKey].color;
+      const candidates = [];
+
+      for (let rotIdx = 0; rotIdx < rotations.length; rotIdx++) {
+        const shape = rotations[rotIdx];
+        const w = shape[0].length;
+
+        for (let col = 0; col <= COLS - w; col++) {
+          const result = simulateDrop(board, shape, col, color);
+          if (!result) continue;
+
+          const heights = getColumnHeights(result.board);
+          const maxH = Math.max(...heights);
+          const holes = countHoles(result.board);
+          const bumpiness = calculateBumpiness(heights);
+
+          const features = [];
+          if (result.linesCleared > 0) features.push(`clears ${result.linesCleared} line(s)`);
+          if (holes === 0) features.push('clean surface without holes');
+          else features.push(`${holes} hole(s)`);
+          if (bumpiness <= 4) features.push('flat surface');
+          features.push(`height ${maxH}/${ROWS}`);
+
+          candidates.push({
+            id: `col${col}_rot${rotIdx}`,
+            col,
+            rotIdx,
+            shape,
+            color,
+            result,
+            maxH,
+            holes,
+            linesCleared: result.linesCleared,
+            description: `Col ${col} (rot ${rotIdx}): ${features.join(', ')}`
+          });
+        }
+      }
+
+      candidates.sort((a, b) => {
+        if (b.linesCleared !== a.linesCleared) return b.linesCleared - a.linesCleared;
+        if (a.holes !== b.holes) return a.holes - b.holes;
+        return a.maxH - b.maxH;
+      });
+
+      return candidates.slice(0, 5);
+    }
+
+    function simulateDrop(b, shape, col, color) {
+      const h = shape.length;
+      let finalRow = -1;
+      for (let r = 0; r <= ROWS - h; r++) {
+        if (canPlace(b, shape, r, col)) {
+          finalRow = r;
+        } else {
+          break;
+        }
+      }
+      if (finalRow === -1) return null;
+
+      const newBoard = b.map(row => [...row]);
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < shape[0].length; c++) {
+          if (shape[r][c]) newBoard[finalRow + r][col + c] = color;
+        }
+      }
+
+      let cleared = 0;
+      for (let r = ROWS - 1; r >= 0; r--) {
+        if (newBoard[r].every(cell => cell !== 0)) {
+          cleared++;
+          newBoard.splice(r, 1);
+          newBoard.unshift(Array(COLS).fill(0));
+          r++;
+        }
+      }
+
+      return { board: newBoard, row: finalRow, linesCleared: cleared };
+    }
+
+    function canPlace(b, shape, row, col) {
+      const h = shape.length;
+      const w = shape[0].length;
+      if (col < 0 || col + w > COLS) return false;
+      if (row < 0 || row + h > ROWS) return false;
+
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          if (shape[r][c] && b[row + r][col + c] !== 0) return false;
+        }
+      }
+      return true;
     }
 
     function getColumnHeights(b) {
@@ -384,220 +927,96 @@
       return b;
     }
 
-    function canPlace(b, shape, row, col) {
-      const h = shape.length;
-      const w = shape[0].length;
-      if (col < 0 || col + w > COLS) return false;
-      if (row < 0 || row + h > ROWS) return false;
+    // CANVAS RENDERING
+    function render() {
+      // Clear
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      for (let r = 0; r < h; r++) {
-        for (let c = 0; c < w; c++) {
-          if (shape[r][c] && b[row + r][col + c] !== 0) return false;
-        }
+      // Grid
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 0.5;
+      for (let c = 0; c <= COLS; c++) {
+        ctx.beginPath();
+        ctx.moveTo(c * BLOCK_SIZE, 0);
+        ctx.lineTo(c * BLOCK_SIZE, ROWS * BLOCK_SIZE);
+        ctx.stroke();
       }
-      return true;
-    }
-
-    function dropPiece(b, shape, col, color) {
-      const h = shape.length;
-      let finalRow = -1;
-      for (let r = 0; r <= ROWS - h; r++) {
-        if (canPlace(b, shape, r, col)) {
-          finalRow = r;
-        } else {
-          break;
-        }
+      for (let r = 0; r <= ROWS; r++) {
+        ctx.beginPath();
+        ctx.moveTo(0, r * BLOCK_SIZE);
+        ctx.lineTo(COLS * BLOCK_SIZE, r * BLOCK_SIZE);
+        ctx.stroke();
       }
-      if (finalRow === -1) return null;
 
-      const newBoard = cloneBoard(b);
-      for (let r = 0; r < h; r++) {
-        for (let c = 0; c < shape[0].length; c++) {
-          if (shape[r][c]) {
-            newBoard[finalRow + r][col + c] = color;
+      // Draw locked board blocks
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (board[r][c] !== 0) {
+            drawBlock(c, r, typeof board[r][c] === 'string' ? board[r][c] : '#818cf8');
           }
         }
       }
 
-      // Check lines
-      let cleared = 0;
-      for (let r = ROWS - 1; r >= 0; r--) {
-        if (newBoard[r].every(cell => cell !== 0)) {
-          cleared++;
-          newBoard.splice(r, 1);
-          newBoard.unshift(Array(COLS).fill(0));
-          r++;
+      // Draw Ghost Piece (where piece will land based on AI target)
+      if (activePiece && targetAI) {
+        const gShape = targetAI.shape;
+        const gCol = targetAI.col;
+        const gRow = targetAI.result.row;
+        const color = activePiece.color;
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.fillStyle = color + '22';
+
+        for (let r = 0; r < gShape.length; r++) {
+          for (let c = 0; c < gShape[0].length; c++) {
+            if (gShape[r][c]) {
+              const x = (gCol + c) * BLOCK_SIZE;
+              const y = (gRow + r) * BLOCK_SIZE;
+              ctx.fillRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+              ctx.strokeRect(x + 2, y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+            }
+          }
         }
       }
 
-      return { board: newBoard, row: finalRow, linesCleared: cleared };
-    }
-
-    function generateCandidateMoves(pieceKey) {
-      const rotations = PIECES[pieceKey].shape;
-      const color = PIECES[pieceKey].color;
-      const candidates = [];
-
-      for (let rotIdx = 0; rotIdx < rotations.length; rotIdx++) {
-        const shape = rotations[rotIdx];
-        const w = shape[0].length;
-
-        for (let col = 0; col <= COLS - w; col++) {
-          const result = dropPiece(board, shape, col, color);
-          if (!result) continue;
-
-          const heights = getColumnHeights(result.board);
-          const maxH = Math.max(...heights);
-          const holes = countHoles(result.board);
-          const bumpiness = calculateBumpiness(heights);
-
-          const features = [];
-          if (result.linesCleared > 0) features.push(`clears ${result.linesCleared} line(s)`);
-          if (holes === 0) features.push('clean surface 0 holes');
-          else features.push(`creates ${holes} hole(s)`);
-          if (bumpiness <= 4) features.push('keeps surface flat');
-          else features.push(`surface bumpiness ${bumpiness}`);
-          features.push(`height ${maxH}/${ROWS}`);
-
-          candidates.push({
-            id: `col${col}_rot${rotIdx}`,
-            col,
-            rotIdx,
-            shape,
-            pieceKey,
-            result,
-            maxH,
-            holes,
-            linesCleared: result.linesCleared,
-            bumpiness,
-            description: `Col ${col} (rot ${rotIdx}): ${features.join(', ')}`
-          });
+      // Draw Active Falling Piece
+      if (activePiece) {
+        const shape = activePiece.shape;
+        for (let r = 0; r < shape.length; r++) {
+          for (let c = 0; c < shape[0].length; c++) {
+            if (shape[r][c]) {
+              drawBlock(activePiece.col + c, activePiece.row + r, activePiece.color);
+            }
+          }
         }
       }
 
-      candidates.sort((a, b) => {
-        if (b.linesCleared !== a.linesCleared) return b.linesCleared - a.linesCleared;
-        if (a.holes !== b.holes) return a.holes - b.holes;
-        if (a.maxH !== b.maxH) return a.maxH - b.maxH;
-        return a.bumpiness - b.bumpiness;
-      });
-
-      return candidates.slice(0, 5);
-    }
-
-    // MAIN STEP EXECUTION WITH HTTP REQUEST TO LAYA
-    async function stepGame() {
-      const currentPieceKey = nextPieceKey;
-      nextPieceKey = PIECE_KEYS[Math.floor(Math.random() * PIECE_KEYS.length)];
-
-      const candidates = generateCandidateMoves(currentPieceKey);
-      if (candidates.length === 0) {
-        logMessage('⚠️ Fim de Jogo! Nenhuma jogada legal disponível.');
-        if (isAutoPlaying) toggleAutoPlay();
-        return;
-      }
-
-      // Build TypeSafe Jev Request Payload
-      const criteriaMap = {};
-      candidates.forEach(c => criteriaMap[c.id] = c.description);
-
+      // Update UI Stats
+      document.getElementById('scoreVal').innerText = score;
+      document.getElementById('linesVal').innerText = linesCleared;
       const heights = getColumnHeights(board);
-      const currentMaxH = Math.max(...heights);
+      const maxH = Math.max(...heights);
+      document.getElementById('heightVal').innerText = `${maxH}/${ROWS}`;
+      document.getElementById('nextPieceVal').innerText = nextPieceKey;
+    }
 
-      const url = document.getElementById('serverUrlInput').value.trim();
-      const payload = {
-        model: 'laya-multilingual',
-        state: {
-          game: 'Tetris',
-          turn: ++turnCount,
-          falling_piece: currentPieceKey,
-          score,
-          lines_cleared: linesCleared,
-          max_tower_height: `${currentMaxH}/${ROWS}`,
-          holes_count: countHoles(board)
-        },
-        questions: {
-          move: {
-            type: 'choice',
-            instructions: 'Select the optimal Tetris move that maximizes cleared lines and maintains a clean, low board surface.',
-            criteria: criteriaMap
-          },
-          danger: {
-            type: 'score',
-            instructions: 'Assess the current danger level based on height and holes',
-            criteria: ['Safe: low height', 'Moderate: some holes', 'Critical: near top ceiling']
-          },
-          loss_risk: {
-            type: 'noul',
-            instructions: 'Is the game in immediate danger of topping out?',
-            threshold: 0.5
-          }
-        }
-      };
+    function drawBlock(c, r, color) {
+      const x = c * BLOCK_SIZE;
+      const y = r * BLOCK_SIZE;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, BLOCK_SIZE - 2);
 
-      // Call Laya HTTP Server
-      let decisionData = null;
-      let latencyMs = 0;
+      // Highlights
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.fillRect(x + 1, y + 1, BLOCK_SIZE - 2, 3);
+      ctx.fillRect(x + 1, y + 1, 3, BLOCK_SIZE - 2);
 
-      const t0 = performance.now();
-      try {
-        const res = await fetch(`${url}/v1/systemone`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        decisionData = await res.json();
-        latencyMs = performance.now() - t0;
-      } catch (err) {
-        latencyMs = performance.now() - t0;
-        logMessage(`⚠️ Erro na chamada HTTP: ${err.message}. Fazendo fallback heurístico.`);
-      }
-
-      let chosenCandidate = candidates[0];
-      let confidence = 0;
-      let probMap = {};
-
-      if (decisionData && decisionData.answers && decisionData.answers.move) {
-        const chosenId = decisionData.answers.move.choice;
-        chosenCandidate = candidates.find(c => c.id === chosenId) || candidates[0];
-        confidence = (decisionData.answers.move.confidence * 100).toFixed(1);
-        probMap = decisionData.answers.move.probabilities || {};
-
-        // Update Risk UI
-        const dangerScore = decisionData.answers.danger?.score || 0;
-        document.getElementById('dangerScoreText').innerText = `${dangerScore.toFixed(2)} / 2.0`;
-        document.getElementById('dangerBar').style.width = `${Math.min(100, (dangerScore / 2.0) * 100)}%`;
-
-        const lossNoul = decisionData.answers.loss_risk?.noul || 0;
-        document.getElementById('lossRiskText').innerText = `${(lossNoul * 100).toFixed(1)}%`;
-        document.getElementById('lossBar').style.width = `${lossNoul * 100}%`;
-      }
-
-      // Update Decision Hero
-      document.getElementById('latencyBadge').innerText = `${latencyMs.toFixed(0)} ms`;
-      document.getElementById('decisionConfidence').innerText = `Confiança: ${confidence}%`;
-      document.getElementById('decisionName').innerText = `${chosenCandidate.id} (Peça ${currentPieceKey})`;
-      document.getElementById('decisionDesc').innerText = chosenCandidate.description;
-
-      // Render candidates list
-      renderCandidates(candidates, chosenCandidate.id, probMap);
-
-      // Ghost preview before drop
-      drawBoard(chosenCandidate);
-
-      // Apply move
-      setTimeout(() => {
-        board = chosenCandidate.result.board;
-        if (chosenCandidate.linesCleared > 0) {
-          linesCleared += chosenCandidate.linesCleared;
-          score += chosenCandidate.linesCleared * 100;
-        }
-        score += 10;
-        drawBoard();
-        logMessage(`Rodada #${turnCount} | Peça ${currentPieceKey} -> ${chosenCandidate.id} (${latencyMs.toFixed(0)}ms)`);
-      }, Math.min(speedDelay * 0.4, 250));
+      // Shadows
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillRect(x + 1, y + BLOCK_SIZE - 4, BLOCK_SIZE - 2, 3);
+      ctx.fillRect(x + BLOCK_SIZE - 4, y + 1, 3, BLOCK_SIZE - 2);
     }
 
     function renderCandidates(candidates, selectedId, probMap) {
@@ -618,7 +1037,7 @@
         card.innerHTML = `
           <div class="flex items-center gap-2 truncate">
             <span>${isSelected ? '👉' : '▫️'}</span>
-            <span class="truncate font-mono">${c.id}: ${c.description}</span>
+            <span class="truncate font-mono">${c.description}</span>
           </div>
           <span class="font-mono text-[10px] ml-2 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700">
             ${prob}%
@@ -628,64 +1047,132 @@
       });
     }
 
-    function toggleAutoPlay() {
-      isAutoPlaying = !isAutoPlaying;
+    // GAME CONTROLS
+    function toggleGame() {
+      isRunning = !isRunning;
       const btn = document.getElementById('btnPlayPause');
       const icon = document.getElementById('playIcon');
       const text = document.getElementById('playText');
       const overlay = document.getElementById('canvasOverlay');
 
-      if (isAutoPlaying) {
+      if (isRunning) {
         btn.className = 'py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white shadow transition active:scale-95';
         icon.innerText = '⏸️';
-        text.innerText = 'Pausar';
+        text.innerText = 'Pause';
         overlay.classList.add('opacity-0');
-        autoPlayTimer = setInterval(stepGame, speedDelay);
+        overlay.classList.add('pointer-events-none');
+        gameTimer = setInterval(gameTick, fallSpeedMs);
+        if (!activePiece) spawnNewPiece();
       } else {
         btn.className = 'py-2.5 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white shadow transition active:scale-95';
         icon.innerText = '▶️';
-        text.innerText = 'Auto Play';
-        clearInterval(autoPlayTimer);
+        text.innerText = 'Start Game';
+        clearInterval(gameTimer);
+        overlay.classList.remove('opacity-0');
+        overlay.classList.remove('pointer-events-none');
       }
     }
 
     function setSpeed(ms, btn) {
-      speedDelay = ms;
+      fallSpeedMs = ms;
       document.querySelectorAll('.speed-btn').forEach(b => {
         b.className = 'speed-btn px-2 py-1 rounded bg-[var(--border)] font-mono';
       });
       btn.className = 'speed-btn px-2 py-1 rounded bg-indigo-600 text-white font-mono';
 
-      if (isAutoPlaying) {
-        clearInterval(autoPlayTimer);
-        autoPlayTimer = setInterval(stepGame, speedDelay);
+      if (isRunning) {
+        clearInterval(gameTimer);
+        gameTimer = setInterval(gameTick, fallSpeedMs);
       }
     }
 
     function resetGame() {
-      if (isAutoPlaying) toggleAutoPlay();
+      if (isRunning) toggleGame();
+      cancelInFlightAI();
+      currentSessionId++; // Invalidate all previous pending HTTP requests
       board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
       score = 0;
       linesCleared = 0;
       turnCount = 0;
-      // Pre-seed some puzzle blocks
+      activePiece = null;
+      targetAI = null;
+
+      // Seed bottom row
       board[ROWS - 1] = [1, 1, 1, 1, 1, 1, 0, 1, 1, 1];
       board[ROWS - 2] = [1, 0, 1, 1, 0, 1, 0, 1, 0, 1];
-      drawBoard();
-      logMessage('Jogo reiniciado.');
+      render();
+      logMessage('Game reset.');
     }
+
+    function gameOver() {
+      if (isRunning) toggleGame();
+      cancelInFlightAI();
+      currentSessionId++; // Invalidate all previous pending HTTP requests
+      activePiece = null;
+      targetAI = null;
+      playBeep(120, 'sawtooth', 0.4);
+      document.getElementById('overlayText').innerText = 'GAME OVER (TOPPED OUT)';
+      document.getElementById('canvasOverlay').classList.remove('opacity-0');
+      document.getElementById('canvasOverlay').classList.remove('pointer-events-none');
+      logMessage('🚨 Game Over! The stack reached the top ceiling.');
+    }
+
+    const rawLogs = [];
 
     function logMessage(msg) {
       const log = document.getElementById('historyLog');
       const time = new Date().toLocaleTimeString();
+      const plainText = `[${time}] ${msg}`;
+      rawLogs.push(plainText);
+      if (rawLogs.length > 100) rawLogs.shift();
+
+      const isWarning = msg.includes('⏱️') || msg.includes('❌') || msg.includes('🚨');
+      const textClass = isWarning ? 'text-rose-300 font-semibold' : 'text-slate-100';
+      const bgClass = isWarning ? 'bg-rose-950/30 px-1 rounded' : '';
+
       const div = document.createElement('div');
-      div.className = 'truncate text-[var(--muted-foreground)]';
-      div.innerHTML = `<span class="text-slate-500">[${time}]</span> ${msg}`;
+      div.className = `py-0.5 border-b border-slate-900/60 break-words leading-relaxed ${bgClass}`;
+      div.innerHTML = `<span class="text-cyan-400 font-semibold">[${time}]</span> <span class="${textClass}">${msg}</span>`;
       log.prepend(div);
-      if (log.children.length > 25) log.lastChild.remove();
+      if (log.children.length > 35) log.lastChild.remove();
     }
 
-    // RUN INIT
+    function copyAllLogs() {
+      const btnText = document.getElementById('copyBtnText');
+      const fullText = rawLogs.slice().reverse().join('\n');
+      if (!fullText) {
+        btnText.innerText = 'No logs';
+        setTimeout(() => { btnText.innerText = 'Copy Logs'; }, 1500);
+        return;
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullText).then(() => {
+          btnText.innerText = '✓ Copied!';
+          setTimeout(() => { btnText.innerText = 'Copy Logs'; }, 2000);
+        }).catch(() => fallbackCopy(fullText));
+      } else {
+        fallbackCopy(fullText);
+      }
+    }
+
+    function fallbackCopy(text) {
+      const btnText = document.getElementById('copyBtnText');
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btnText.innerText = '✓ Copied!';
+      setTimeout(() => { btnText.innerText = 'Copy Logs'; }, 2000);
+    }
+
+    function clearLogs() {
+      rawLogs.length = 0;
+      document.getElementById('historyLog').innerHTML = '<div class="text-slate-500 italic">Logs cleared.</div>';
+    }
+
     init();
   </script>
 </body>

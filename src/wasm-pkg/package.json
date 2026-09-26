@@ -1,0 +1,17 @@
+{
+  "name": "laya-inference",
+  "type": "module",
+  "description": "Pure-Rust inference core for laya-system-one (tract, no ONNX Runtime)",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "files": [
+    "laya_inference_bg.wasm",
+    "laya_inference.js",
+    "laya_inference.d.ts"
+  ],
+  "main": "laya_inference.js",
+  "types": "laya_inference.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

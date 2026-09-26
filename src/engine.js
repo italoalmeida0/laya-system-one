@@ -4,86 +4,38 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MODEL_RELEASE_URL = 'https://github.com/italoalmeida0/laya-system-one/releases/download/v1.0.0/model.onnx';
+import { resolveModel } from './model-resolver.js';
 
-async function resolveModelPath(modelDir) {
-  const localPath = path.join(modelDir, 'model.onnx');
-  if (fs.existsSync(localPath)) {
-    return localPath;
-  }
-
-  // Check user cache directory fallback if models dir is read-only
-  const cacheDir = path.join(os.homedir(), '.cache', 'laya-system-one');
-  const cachePath = path.join(cacheDir, 'model.onnx');
-  if (fs.existsSync(cachePath)) {
-    return cachePath;
-  }
-
-  let targetPath = localPath;
-  try {
-    if (!fs.existsSync(modelDir)) {
-      fs.mkdirSync(modelDir, { recursive: true });
-    }
-    const testFile = path.join(modelDir, '.test_write');
-    fs.writeFileSync(testFile, '');
-    fs.unlinkSync(testFile);
-  } catch (err) {
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
-    }
-    targetPath = cachePath;
-  }
-
-  console.log(`[laya-system-one] Downloading INT8 model asset from GitHub Releases (~324 MB)...`);
-  console.log(`[laya-system-one] Source: ${MODEL_RELEASE_URL}`);
-
-  const res = await fetch(MODEL_RELEASE_URL);
-  if (!res.ok) {
-    throw new Error(`Failed to download model from ${MODEL_RELEASE_URL}: HTTP ${res.status} ${res.statusText}`);
-  }
-
-  const total = parseInt(res.headers.get('content-length') || '324125608', 10);
-  let loaded = 0;
-  let lastLogged = 0;
-
-  const fileStream = fs.createWriteStream(targetPath);
-  const reader = res.body.getReader();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    fileStream.write(Buffer.from(value));
-    loaded += value.length;
-    const pct = Math.floor((loaded / total) * 100);
-    if (pct >= lastLogged + 10 || pct === 100) {
-      if (process.stdout && process.stdout.write) {
-        process.stdout.write(`\r[laya-system-one] Download progress: ${pct}% (${(loaded / (1024 * 1024)).toFixed(1)} MB / ${(total / (1024 * 1024)).toFixed(1)} MB)`);
-      }
-      lastLogged = pct;
-    }
-  }
-
-  await new Promise((resolve, reject) => {
-    fileStream.end((err) => (err ? reject(err) : resolve()));
-  });
-
-  console.log(`\n[laya-system-one] Model ready at: ${targetPath}`);
-  return targetPath;
+/**
+ * Resolve `model.onnx` to a local path, acquiring it if needed.
+ *
+ * Thin compat wrapper over model-resolver.js — layered and deterministic:
+ *   LAYA_MODEL_PATH -> local file -> verified cache -> npm chunk packages
+ *   -> GitHub Releases asset. Every copy is sha256-verified and written
+ *   atomically, so an interrupted download never leaves a corrupt model.
+ *
+ * @returns {Promise<string>} absolute path to model.onnx
+ */
+export async function resolveModelPath(modelDir, options = {}) {
+  const resolved = await resolveModel({ modelDir, ...options });
+  return resolved.path;
 }
 
 // Dynamic runtime resolver:
-// - In Node.js: uses onnxruntime-node (Native C++ CPU at ~15ms + Native WebGPU)
-// - In Bun / Browser: uses onnxruntime-web (WASM SIMD + Browser WebGPU via navigator.gpu)
+// - Node.js AND Bun: onnxruntime-node (Native C++ CPU, ~25-80ms). Bun can
+//   load the node binding fine, and it is ~20x faster than WASM (~1.7s).
+//   NOTE: 'webgpu' is intentionally NOT used server-side — ORT's node
+//   webgpu EP falls back per-op to CPU with huge overhead.
+// - Browser only: onnxruntime-web (WASM SIMD + navigator.gpu WebGPU).
 async function getOrt() {
-  const isBun = typeof Bun !== 'undefined';
   const isBrowser = typeof window !== 'undefined';
 
-  if (!isBun && !isBrowser) {
+  if (!isBrowser) {
     try {
       const mod = await import('onnxruntime-node');
       return mod.default || mod;
     } catch (err) {
-      // fallback to onnxruntime-web
+      // fallback to onnxruntime-web (e.g. exotic platform without binding)
     }
   }
 
@@ -96,12 +48,26 @@ export class LayaEngine {
     this.session = session;
     this.config = config;
     this.ort = ort;
+    // wasm-tract backend (optional): { pool } when backend === 'wasm'.
+    this.wasmPool = null;
+    this.backend = 'ort';
+  }
+
+  /** Use the pure-Rust wasm (tract) worker pool instead of onnxruntime. */
+  async useWasmBackend(options = {}) {
+    const { WasmPool } = await import('./laya-wasm-pool.js');
+    const modelDir = options.modelDir || path.resolve(__dirname, '../models');
+    const modelPath = await resolveModelPath(modelDir, options);
+    this.wasmPool = new WasmPool({ modelPath, size: options.wasmWorkers });
+    await this.wasmPool.ready();
+    this.backend = 'wasm';
+    return this;
   }
 
   static async load(options = {}) {
     const ort = await getOrt();
     const modelDir = options.modelDir || path.resolve(__dirname, '../models');
-    const modelPath = await resolveModelPath(modelDir);
+    const modelPath = await resolveModelPath(modelDir, options);
     const configPath = path.join(modelDir, 'rl_agent_config.json');
 
     let config = {
@@ -120,29 +86,70 @@ export class LayaEngine {
     }
 
     const device = options.device || 'auto';
+    const isBrowser = typeof window !== 'undefined';
     let executionProviders;
 
-    if (device === 'webgpu') {
-      executionProviders = ['webgpu'];
+    if (!isBrowser) {
+      // Node.js AND Bun (both use onnxruntime-node): pure CPU is the
+      // fastest path (~25-80ms). Never include 'webgpu' here — it triggers
+      // per-op fallback overhead (~500ms+). 'wasm' is browser-only.
+      // device 'wasm'/'webgpu' are accepted but ignored server-side.
+      executionProviders = ['cpu'];
+    } else if (device === 'webgpu') {
+      executionProviders = ['webgpu', 'wasm'];
     } else if (device === 'wasm' || device === 'cpu') {
-      executionProviders = typeof Bun !== 'undefined' || typeof window !== 'undefined' ? ['wasm'] : ['cpu'];
+      executionProviders = ['wasm'];
     } else {
-      // auto
-      executionProviders = typeof Bun !== 'undefined' || typeof window !== 'undefined'
-        ? ['webgpu', 'wasm']
-        : ['webgpu', 'cpu'];
+      // auto on Browser: prefer WebGPU, fall back to WASM SIMD
+      executionProviders = ['webgpu', 'wasm'];
     }
 
+    // Threading: measured on Snapdragon X (ARM64, Windows):
+    //   Node: default pool (~12 threads) ≈ 25ms; intra1 ≈ 219ms.
+    //   Bun: napi bridge serializes large-matmul thread sync badly —
+    //   seqLen >= 64 degrades to ~1300ms with the default pool; small
+    //   shapes stay fast. intraOpNumThreads: 1 keeps large shapes at
+    //   ~90-110ms. So Bun pins 1 thread; Node keeps ORT defaults.
+    //   Override with LAYA_THREADS / intraOpNumThreads if you know better.
+    const isBunRt = typeof Bun !== 'undefined';
+    const envThreads = parseInt(process.env.LAYA_THREADS || '', 10);
+    const intraDefault = isBunRt ? 1 : 0; // 0 = leave unset (ORT default)
+    const intraWanted = options.intraOpNumThreads || (Number.isFinite(envThreads) && envThreads > 0 ? envThreads : intraDefault);
     const sessionOptions = {
       executionProviders,
-      graphOptimizationLevel: 'all'
+      graphOptimizationLevel: 'all',
+      ...(intraWanted ? { intraOpNumThreads: intraWanted } : {}),
+      ...(options.interOpNumThreads ? { interOpNumThreads: options.interOpNumThreads } : {}),
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      executionMode: 'sequential',
+      logSeverityLevel: 3
     };
 
     const session = await ort.InferenceSession.create(modelPath, sessionOptions);
-    return new LayaEngine(session, config, ort);
+    const engine = new LayaEngine(session, config, ort);
+
+    // Warmup: first run includes graph partitioning + arena allocation and
+    // is 3-10x slower. Run 2 tiny inferences now so real requests are fast.
+    if (options.warmup !== false) {
+      try {
+        const warmIds = new Array(32).fill(10);
+        const warmMarkers = [5, 12];
+        await engine.runSingle({ ids: warmIds, markers: warmMarkers, qtype: 0 });
+        await engine.runSingle({ ids: warmIds, markers: warmMarkers, qtype: 0 });
+      } catch (e) {
+        // Warmup is best-effort; ignore failures.
+      }
+    }
+    return engine;
   }
 
   async runSingle(item) {
+    // wasm-tract backend: dispatch to the worker pool (pure Rust, no ORT).
+    if (this.backend === 'wasm' && this.wasmPool) {
+      const { logits } = await this.wasmPool.infer(item);
+      return logits;
+    }
     const seqLen = item.ids.length;
     const numMarkers = item.markers.length;
 
@@ -181,5 +188,24 @@ export class LayaEngine {
       allLogits.push(logits);
     }
     return allLogits;
+  }
+
+  /**
+   * Release native/wasm resources. Safe to call multiple times.
+   * Keeps shutdown deterministic (no leaked sessions or worker threads
+   * keeping the process alive).
+   */
+  async close() {
+    const pool = this.wasmPool || this.wasm;
+    if (pool && typeof pool.close === 'function') {
+      try { await pool.close(); } catch { /* best-effort */ }
+    }
+    this.wasmPool = null;
+    this.wasm = null;
+    this._sessCache?.clear?.();
+    if (this.session && typeof this.session.release === 'function') {
+      try { await this.session.release(); } catch { /* best-effort */ }
+    }
+    this.session = null;
   }
 }
