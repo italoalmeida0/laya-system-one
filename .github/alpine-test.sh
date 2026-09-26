@@ -17,14 +17,17 @@ echo "--- musl runtime ---"
 ls /lib/ld-musl* || true
 ls -la /usr/lib/libonnxruntime* || true
 
-TRIPLE="$1"
-
 echo "--- build laya-serve (musl) ---"
 export ORT_LIB_PATH=/usr/lib
 export ORT_PREFER_DYNAMIC_LINK=1
-cargo build --release --target "$TRIPLE" --manifest-path native/laya-serve/Cargo.toml
+# No --target here: Alpine's rustc host triple is <arch>-alpine-linux-musl,
+# not <arch>-unknown-linux-musl, so a --target build would need a separate
+# rust-std that does not exist for that host. The host IS musl already, so
+# building for the host produces a musl binary - and the target dir is the
+# plain release one.
+cargo build --release --manifest-path native/laya-serve/Cargo.toml
 
-BIN="$PWD/native/laya-serve/target/$TRIPLE/release/laya-serve"
+BIN="$PWD/native/laya-serve/target/release/laya-serve"
 chmod +x "$BIN"
 file "$BIN" || true
 export LAYA_SERVE_BIN="$BIN"

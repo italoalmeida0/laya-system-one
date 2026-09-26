@@ -195,6 +195,21 @@ jobs:
           cp "$BIN" '${{ matrix.out }}'
           chmod +x '${{ matrix.out }}' 2>/dev/null || true
           ls -la "$(dirname '${{ matrix.out }}')"
+
+          # mac-x64 links ONNX Runtime dynamically (no ort-sys prebuilt), so
+          # the dylib must travel with the binary and the load path must be
+          # relocatable - otherwise laya-serve dies at startup with
+          # "Library not loaded" and the tests see "exited before ready".
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            cp ort-libs/libonnxruntime*.dylib "$(dirname '${{ matrix.out }}')/"
+            for dylib in "$(dirname '${{ matrix.out }}')"/libonnxruntime*.dylib; do
+              install_name_tool -id "@loader_path/$(basename "$dylib")" "$dylib"
+            done
+            for ref in $(otool -L '${{ matrix.out }}' | awk '/libonnxruntime/{print $1}'); do
+              install_name_tool -change "$ref" "@loader_path/$(basename "$ref")" '${{ matrix.out }}'
+            done
+          fi
+
           echo "--- smoke the binary (catches missing dylibs early) ---"
           if [ "${{ runner.os }}" = "macOS" ]; then
             otool -L '${{ matrix.out }}' || true
