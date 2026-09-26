@@ -103,7 +103,7 @@ jobs:
           "$BIN" --help 2>&1 | head -3
 
       - name: Fetch the model (verified against the manifest)
-        run: npm run model:acquire
+        run: node tools/acquire-model.js --github
 
       - name: Prove the binary answers questions (10 questions)
         env:
@@ -206,7 +206,7 @@ jobs:
           key: model-${{ hashFiles('models/model.manifest.json') }}
 
       - name: Acquire the model (verified)
-        run: npm run model:acquire
+        run: node tools/acquire-model.js --github
 
       - name: Split into chunk packages + reassemble to prove it round-trips
         run: |

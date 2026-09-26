@@ -60,19 +60,48 @@ There are **no external runtime dependencies**: no `onnxruntime-*`, no `@hugging
 
 ---
 
-## The model asset
+## How the heavy pieces arrive
 
-`model.onnx` is **~324 MB**, which is over the npm registry payload limit (~200 MB, HTTP 413). It therefore ships separately and is acquired automatically, in this order:
+The entry package is small on purpose (**~8.5 MB**): source, tokenizer and the
+wasm fallback. The binaries (150+ MB for every platform) and the model
+(324 MB) are published as separate `@sys-one` packages and installed as
+`optionalDependencies`, so npm fetches only what the machine needs:
+
+| package | selected by | size |
+| --- | --- | --- |
+| `@sys-one/laya-serve-<os>-<arch>` | npm's `os`/`cpu` fields | 8–26 MB |
+| `@sys-one/laya-serve-universal` | fallback for exotic platforms | ~76 MB |
+| `@sys-one/laya-model-chunk-00` … `-12` | always (all 13) | ~24 MB each |
+
+A `linux/x64` machine installs `laya-serve-linux-x64` and nothing else;
+a `linux/ppc64` machine matches none of the specific packages and gets the
+universal one. No package installs all of them.
+
+Two things worth knowing about how the selection works, because both were
+verified by experiment rather than assumed:
+
+- **`libc` cannot select.** The field exists but is unreliable (undocumented
+  shorthand, and real packages have shipped bugs where `--libc=glibc` pulls
+  the musl build too). So the glibc and musl builds of a Linux arch travel
+  **together** in one package, and the loader picks at runtime.
+- **Exclusions are AND-ed.** `os: ["!darwin", "!win32"]` means "not both",
+  not "either", so the complement of the specific packages cannot be spelled
+  out. The universal package lists the exotic cpus and OSes explicitly
+  instead: skipped wherever a specific package applies, selected everywhere
+  else.
+
+The model is assembled from its chunk packages on first use and verified
+against `models/model.manifest.json` (sha256 of the model *and* of every
+chunk), written atomically — a killed process cannot leave a corrupt model
+behind, the next run retries. The order is:
 
 1. `LAYA_MODEL_PATH` — explicit path to a `model.onnx` (file or directory);
 2. a `model.onnx` already present in the package's `models/` directory;
-3. `~/.cache/laya-system-one/model.onnx` — previously acquired copy;
-4. **model chunk packages on npm** — the checkpoint is split into 13 packages (`laya-system-one-model-chunk-00` … `-12`, ~24 MB each) that are reassembled locally;
-5. the GitHub Release asset (fallback).
-
-Every copy is verified against `models/model.manifest.json` (sha256 of the model *and* of each chunk) and written atomically: a killed download can never leave a corrupt model behind — the next run just retries.
-
-Nothing else is downloaded at install time. The native binary, the tokenizer and the config ship inside the package.
+3. `~/.cache/laya-system-one/model.onnx` — previously assembled copy;
+4. the installed `@sys-one/laya-model-chunk-*` packages (the normal path);
+5. the npm registry, if the chunks were not installed as dependencies;
+6. the GitHub Release asset — **opt-in only** (`LAYA_ALLOW_GITHUB_FALLBACK=1`),
+   kept for compatibility with 1.0.0 installs.
 
 ### Offline / air-gapped installs
 
@@ -227,7 +256,7 @@ The `native` backend needs nothing installed: the binary is statically linked an
 |---|---|---|
 | package (code + binaries) | `node_modules/laya-system-one` | ~88 MB unpacked |
 | model asset | `models/model.onnx` or `~/.cache/laya-system-one/` | ~324 MB |
-| chunk packages | `dist/model-chunks/` (release artifacts) | ~324 MB |
+| chunk packages | `dist/release/model-chunks/` (release artifacts) | ~324 MB |
 
 The model is written to the package directory when it is writable, otherwise to the user cache — so global installs (`npm i -g`) and read-only containers work out of the box.
 
