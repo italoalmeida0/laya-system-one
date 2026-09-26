@@ -235,7 +235,16 @@ export class NativeServer {
     ];
     if (this.apiKey) args.push('--api-key', this.apiKey);
     return new Promise((resolve, reject) => {
-      const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: spawnEnv });
+      const proc = spawn(bin, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: spawnEnv,
+        // Windows: do not flash a console window for the helper process, and
+        // keep it in the caller's job object so Ctrl+C / task manager reaches
+        // it. The binary is a plain user-space program: no elevation, no
+        // service, nothing installed outside the package directory.
+        windowsHide: true,
+        detached: false
+      });
       this.proc = proc;
       let out = '';
       const timer = setTimeout(() => {

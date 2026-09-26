@@ -247,14 +247,24 @@ jobs:
       - name: Download every package built above
         uses: actions/download-artifact@v8
         with:
-          path: dist/release
-          merge-multiple: true
+          path: artifacts
 
       - name: Assemble the release tree
         run: |
           set -euo pipefail
-          ls -R dist/release | head -40
-          node tools/build-platform-packages.js build
+          # binaries-* artifacts each contain dist/release/binaries/<pkg>/;
+          # model-chunks contains the 13 chunk packages. Put them back where
+          # tools/publish-all.js looks for them.
+          mkdir -p dist/release/binaries dist/release/model-chunks
+          for d in artifacts/binaries-*; do
+            [ -d "$d" ] || continue
+            cp -r "$d"/. dist/release/binaries/
+          done
+          if [ -d artifacts/model-chunks ]; then
+            cp -r artifacts/model-chunks/. dist/release/model-chunks/
+          fi
+          echo "--- binaries ---"; ls dist/release/binaries
+          echo "--- chunks ---";   ls dist/release/model-chunks | head -3
           node tools/publish-all.js inspect
 
       - name: Verify every platform package has a binary
