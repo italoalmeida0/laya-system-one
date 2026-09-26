@@ -142,6 +142,7 @@ jobs:
       - run: npm run test:packaging
 
       - name: Model chunk pipeline (split -> chunks -> reassemble)
+        shell: bash
         run: |
           npm run model:chunks -- --chunk-mb 24 --model-version 1.0.0
           npm run model:assemble -- --out "$RUNNER_TEMP/model.from-chunks.onnx"
