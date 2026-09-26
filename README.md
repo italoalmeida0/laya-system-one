@@ -164,26 +164,32 @@ npx laya-system-one --port 8080 --backend native
 
 ## Performance
 
-Measure it on your own hardware with `npm run bench` (writes a JSON report).
+`npm run bench` measures it on your own hardware and writes a JSON report.
 
-Measured on a 4-core **Windows ARM64** laptop, Node 22, the bundled
-`laya-serve` binary (the default backend):
+Measured by CI on every platform we ship a binary for (Node 22, the bundled
+`laya-serve` binary, 4 questions per call):
 
-| metric | `native` (default) | `wasm` (fallback) |
-|---|---|---|
-| init (load model) | 1.8 s | 1.8 s |
-| cold question (first call, 4 questions) | 175 ms | 13 s |
-| warm, 4 questions per call | **131 ms** (p50 113, p95 288) | 24 s |
-| warm, 1 question per call | **51 ms** (p50 48, p95 71) | 6.2 s |
-| sustained throughput (1 q/call) | **19.4 q/s** | 0.16 q/s |
+| platform | init | cold question | warm avg (4 q) | warm p50 / p95 | 1 q per call | throughput |
+|---|---|---|---|---|---|---|
+| **linux-x64** (glibc) | 1.5 s | 281 ms | 214 ms | 210 / 245 | 52 ms | 19.3 q/s |
+| **linux-arm64** (glibc) | 1.5 s | 205 ms | 143 ms | 139 / 161 | 34 ms | 29.2 q/s |
+| **win-x64** | 1.6 s | 119 ms | 100 ms | 98 / 116 | 29 ms | 34.3 q/s |
+| **win-arm64** | 1.5 s | 237 ms | 181 ms | 176 / 212 | 47 ms | 21.3 q/s |
+| **mac-arm64** | 2.3 s | 434 ms | 273 ms | 272 / 316 | 56 ms | 18.0 q/s |
 
-The native binary is the product; the wasm engine is a safety net for
-browsers and exotic platforms, and it is ~100x slower by design: `tract`
-must specialize the whole model per input shape, so it runs a fixed padded
-shape (see `LayaEngine.padForWasm`) and pays for every position.
+`init` is loading the model, `cold` is the very first question (warmup and
+arena allocation), and the warm numbers are the sustained latency.
 
-If you are on a platform we ship a binary for and you see the wasm backend
-being used, that is a bug - the install is broken (see Troubleshooting).
+The `wasm` fallback is ~100x slower by design: `tract` specializes the whole
+model per input shape, so it runs a fixed padded shape (see
+`LayaEngine.padForWasm`) and pays for every position - about 6 s per question
+in the small bucket, 1.8 s to load. It exists for browsers and exotic
+platforms, not for throughput.
+
+**If you are on a platform we ship a binary for and you see the wasm backend
+being used, that is a bug** - the install is broken. The tests fail on
+purpose in that situation (`LAYA_ALLOW_WASM_FALLBACK=1` is the only way to
+accept the fallback).
 
 ## Size
 
