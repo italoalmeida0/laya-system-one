@@ -118,9 +118,8 @@ jobs:
       - name: Build + test inside Alpine (musl)
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
-            sed -i 's/v3\.\*/edge/g; /alpine/d' /etc/apk/repositories 2>/dev/null || true
-            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/main' >> /etc/apk/repositories
-            echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
+            printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/edge/main' 'https://dl-cdn.alpinelinux.org/alpine/edge/community' > /etc/apk/repositories
+            cat /etc/apk/repositories
             apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
             echo "--- musl runtime ---"
             ls /lib/ld-musl* || true
@@ -192,10 +191,13 @@ jobs:
           ls -la "$GITHUB_WORKSPACE/ort-libs" | head
 
       - name: Build laya-serve (primary backend)
-        run: cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
-        env:
-          ORT_LIB_PATH: ${{ github.workspace }}/ort-libs
-          ORT_PREFER_DYNAMIC_LINK: '1'
+        run: |
+          EXTRA=""
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            # only mac-x64 has no ort-sys prebuilt -> link the dylib we provided
+            EXTRA="-e ORT_LIB_PATH=$GITHUB_WORKSPACE/ort-libs -e ORT_PREFER_DYNAMIC_LINK=1"
+          fi
+          env $EXTRA cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
 
       - name: Stage binary
         shell: bash
@@ -207,6 +209,11 @@ jobs:
           cp "$BIN" '${{ matrix.out }}'
           chmod +x '${{ matrix.out }}' 2>/dev/null || true
           ls -la "$(dirname '${{ matrix.out }}')"
+          echo "--- smoke the binary (catches missing dylibs early) ---"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            otool -L '${{ matrix.out }}' || true
+          fi
+          '${{ matrix.out }}' --help 2>&1 | head -5 || true
 
       - run: npm ci
 
