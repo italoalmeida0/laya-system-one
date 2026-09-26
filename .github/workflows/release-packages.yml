@@ -1,24 +1,26 @@
-name: release packages
+name: build packages
 
-# Builds everything that gets published, on every platform, and uploads the
-# finished packages as artifacts. Nothing is published from CI on purpose:
-# publishing happens locally (npm login, no long-lived token in CI), see
-# tools/publish-all.js.
+# The only thing CI needs to do: build the binaries for every platform, cut
+# the model into chunks, prove the result actually answers questions, and
+# upload the packages as artifacts ready to publish.
 #
-# Artifacts produced (consumed by `node tools/publish-all.js download --run <id>`):
-#   binaries-<slot>     @sys-one/laya-serve-<platform>   (one per platform)
-#   binaries-universal  @sys-one/laya-serve-universal    (every binary)
-#   model-chunks        the 13 @sys-one/laya-model-chunk-NN packages
-#   entry-package       the laya-system-one tarball + its package.json
+# What is deliberately NOT here:
+#   - lint, unit tests, e2e, the whole suite   -> npm run check   (local)
+#   - the install rehearsal against a fake registry -> npm run test:rehearsal (local)
+#   - publishing                              -> tools/publish-all.js (local, npm login)
+#
+# Verification against the REAL registry lives in verify-published.yml, which
+# installs a published version on every platform (musl, node, bun) and runs it.
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
 
 concurrency:
-  group: release-packages-${{ github.ref }}
-  cancel-in-progress: false
+  group: build-packages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ------------------------------------------------------------------
@@ -99,6 +101,11 @@ jobs:
           BIN=$(find dist/release/binaries -type f \( -name 'laya-serve' -o -name 'laya-serve.exe' \) | head -1)
           ls -la "$BIN"
           "$BIN" --help 2>&1 | head -3
+
+      - name: Prove the binary answers questions (10 questions)
+        env:
+          LAYA_REQUIRE_MODEL: '1'
+        run: node tools/quick-check.js --binary '${{ matrix.out }}'
 
       - name: Upload this platform's package
         uses: actions/upload-artifact@v7

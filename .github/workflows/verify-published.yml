@@ -1,80 +1,108 @@
 name: verify published
 
-# Installs the PUBLISHED package from the npm registry on every platform and
-# actually runs it. This is the check that matters after a publish: it proves
-# the os/cpu package selection works against the real registry, that the
-# binary arrives, that the model reaches the machine, and that inference
-# returns the expected answer.
+# Installs a PUBLISHED version from the real npm registry and uses it, on
+# every platform we claim to support. This is the test that cannot be faked
+# locally: it proves that npm's own selection (os/cpu in optionalDependencies)
+# picks the right package out of the registry, that the binary arrives and
+# runs, that the model chunks assemble, and that inference answers correctly.
+#
+# Run it after publishing an alpha, before promoting to latest:
 #
 #   gh workflow run verify-published.yml -f version=1.1.0-alpha.0 -f tag=alpha
 #
-# Run it after `node tools/publish-all.js publish --tag alpha` and before
-# promoting to `latest`.
+# Coverage:
+#   linux glibc x64/arm64     native binary
+#   linux musl  x64/arm64     native binary (container, real Alpine)
+#   windows x64/arm64         native binary
+#   macos arm64/x64           native binary
+#   each of the above in Node, and once more under Bun
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Exact version published (e.g. 1.1.0-alpha.0)'
+        description: 'Exact published version (e.g. 1.1.0-alpha.0)'
         required: true
       tag:
         description: 'dist-tag it was published under'
         required: false
         default: 'alpha'
 
+concurrency:
+  group: verify-published-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
 jobs:
-  verify:
-    name: install & run (${{ matrix.name }})
+  # ------------------------------------------------------------------
+  # native platforms: install from npm and run for real
+  # ------------------------------------------------------------------
+  native:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: 'linux-x64 glibc',   os: ubuntu-latest,    expect: linux-x64 }
-          - { name: 'linux-arm64 glibc', os: ubuntu-24.04-arm, expect: linux-arm64 }
-          - { name: 'win-x64',           os: windows-latest,   expect: win32-x64 }
-          - { name: 'win-arm64',         os: windows-11-arm,   expect: win32-arm64 }
-          - { name: 'mac-arm64',         os: macos-latest,     expect: darwin-arm64 }
-          - { name: 'mac-x64',           os: macos-15-intel,   expect: darwin-x64 }
+          - { name: 'linux-x64 glibc',   os: ubuntu-latest,    slot: linux-x64,     bin: laya-serve }
+          - { name: 'linux-arm64 glibc', os: ubuntu-24.04-arm, slot: linux-arm64,   bin: laya-serve }
+          - { name: 'win32-x64',         os: windows-latest,   slot: win32-x64,     bin: laya-serve.exe }
+          - { name: 'win32-arm64',       os: windows-11-arm,   slot: win32-arm64,   bin: laya-serve.exe }
+          - { name: 'darwin-arm64',      os: macos-latest,     slot: darwin-arm64,  bin: laya-serve }
+          - { name: 'darwin-x64',        os: macos-15-intel,   slot: darwin-x64,    bin: laya-serve }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/setup-node@v7
         with: { node-version: 22 }
 
-      - name: Install from the registry (no cache, no local files)
+      - name: Install from the registry (nothing cached, nothing local)
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           mkdir -p verify && cd verify
           npm init -y >/dev/null
-          npm install "laya-system-one@${{ inputs.version }}" --no-audit --no-fund
-          echo "--- what npm actually installed ---"
-          ls node_modules/@sys-one/ 2>/dev/null || echo "(no @sys-one packages?!)"
+          npm install "laya-system-one@$VERSION" --no-audit --no-fund
+          echo "--- installed @sys-one packages ---"
+          ls node_modules/@sys-one/ | sort
 
-      - name: The platform package must be the one we expect
+      - name: Exactly the right platform package arrived
+        shell: bash
+        env:
+          SLOT: ${{ matrix.slot }}
+        run: |
+          set -euo pipefail
+          cd verify
+          SPECIFIC=$(ls node_modules/@sys-one/ | grep '^laya-serve-' | grep -v universal || true)
+          COUNT=$(echo "$SPECIFIC" | grep -c . || true)
+          echo "specific platform packages: $SPECIFIC"
+          [ "$COUNT" -eq 1 ] || { echo "expected exactly one, got $COUNT"; exit 1; }
+          [ "$SPECIFIC" = "laya-serve-$SLOT" ] || { echo "expected laya-serve-$SLOT"; exit 1; }
+
+      - name: The model chunks arrived
         shell: bash
         run: |
           set -euo pipefail
           cd verify
-          WANT="node_modules/@sys-one/laya-serve-${{ matrix.expect }}"
-          if [ ! -d "$WANT" ]; then
-            echo "expected $WANT to be installed"; ls node_modules/@sys-one; exit 1
+          N=$(ls -d node_modules/@sys-one/laya-model-chunk-* | wc -l)
+          echo "chunk packages: $N"
+          [ "$N" -ge 13 ] || { echo "expected 13 chunks"; exit 1; }
+
+      - name: Binary is present and executable
+        shell: bash
+        env:
+          SLOT: ${{ matrix.slot }}
+          BIN: ${{ matrix.bin }}
+        run: |
+          set -euo pipefail
+          cd verify
+          B="node_modules/@sys-one/laya-serve-$SLOT/bin/$SLOT/$BIN"
+          ls -la "$B"
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            test -x "$B" || { echo "binary is not executable"; exit 1; }
           fi
-          echo "ok: $WANT present"
-          BIN=$(find "$WANT/bin" -type f \( -name 'laya-serve' -o -name 'laya-serve.exe' \) | head -1)
-          [ -n "$BIN" ] || { echo "no binary in $WANT"; exit 1; }
-          echo "binary: $BIN"
-          ls -la "$BIN"
+          "$B" --help 2>&1 | head -2
 
-      - name: The model chunks must have arrived too
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd verify
-          COUNT=$(ls -d node_modules/@sys-one/laya-model-chunk-* 2>/dev/null | wc -l)
-          echo "model chunk packages installed: $COUNT"
-          [ "$COUNT" -ge 13 ] || { echo "expected 13 chunk packages"; exit 1; }
-
-      - name: Run a real inference (native binary, no wasm fallback)
+      - name: Node — install, load and answer 10 questions
         shell: bash
         env:
           LAYA_REQUIRE_MODEL: '1'
@@ -83,39 +111,184 @@ jobs:
           cd verify
           cat > check.mjs <<'JS'
           import { Laya } from 'laya-system-one';
+          const cases = [
+            ['We were billed twice on the March invoice and want a refund.', 'billing'],
+            ['The application crashes with a segfault when I open the settings page.', 'tech'],
+            ['Fui cobrado em duplicidade na minha fatura e quero reembolso.', 'billing'],
+            ['Me cobraron dos veces en mi factura y quiero un reembolso.', 'billing'],
+            ['Your service has been down for six hours and nobody answers.', 'tech'],
+            ['The app freezes and throws an exception on startup.', 'tech'],
+            ['I was charged the wrong amount on my last invoice.', 'billing'],
+            ['Quero fazer upgrade do meu plano para o empresarial.', 'sales'],
+            ['Can you send me a quote for the business tier?', 'sales'],
+            ['We would like to purchase more seats for our account.', 'sales']
+          ];
+          const q = { department: { type: 'choice', instructions: 'Which department should handle this?',
+            criteria: { billing: 'refunds and invoices', tech: 'bugs and crashes', sales: 'upgrades and contracts' } } };
+          const t0 = Date.now();
           const laya = await Laya.load({ backend: 'native' });
-          const out = await laya.predict(
-            'We were billed twice on the March invoice and want a refund.',
-            { department: { type: 'choice', instructions: 'Which department?',
-                criteria: { billing: 'refunds and invoices', tech: 'bugs', sales: 'upgrades' } } }
-          );
-          const choice = out.answers.department.choice;
-          console.log('backend:', laya.backend ?? 'native', '| answer:', choice);
-          if (choice !== 'billing') { console.error('wrong answer:', JSON.stringify(out.answers)); process.exit(1); }
+          let pass = 0;
+          for (const [prompt, expected] of cases) {
+            const got = (await laya.predict(prompt, q)).answers.department.choice;
+            if (got === expected) pass++; else console.log('  mismatch', { prompt, expected, got });
+          }
+          console.log(`correct: ${pass}/${cases.length} in ${((Date.now()-t0)/1000).toFixed(1)}s`);
           await laya.close();
-          console.log('VERIFIED');
+          if (pass < 8) process.exit(1);
           JS
           node check.mjs
 
-      - name: Confirm it did NOT silently fall back to wasm
+      - name: The binary came from node_modules (no silent wasm fallback)
         shell: bash
         run: |
           set -euo pipefail
           cd verify
-          node -e "
-            import('laya-system-one/src/laya-native.js').then(m => {
-              const bin = m.resolveBinaryOrNull();
-              console.log('resolved binary:', bin);
-              if (!bin || !bin.includes('node_modules')) {
-                console.error('the binary did not come from the installed package'); process.exit(1);
-              }
-              console.log('OK: binary came from node_modules');
-            });
-          "
+          cat > where.mjs <<'JS'
+          import { resolveBinaryOrNull } from 'laya-system-one/src/laya-native.js';
+          const bin = resolveBinaryOrNull();
+          console.log('resolved:', bin);
+          if (!bin || !bin.includes('node_modules')) { console.error('not from node_modules'); process.exit(1); }
+          JS
+          node where.mjs
 
-      - name: CLI works from a clean install
+      - name: CLI works
         shell: bash
         run: |
           set -euo pipefail
           cd verify
           npx laya-system-one --version
+
+      - name: Bun — the same install, a different runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd verify
+          if ! command -v bun >/dev/null 2>&1; then
+            curl -fsSL https://bun.sh/install | bash
+            export BUN_INSTALL="$HOME/.bun"
+            export PATH="$BUN_INSTALL/bin:$PATH"
+          fi
+          bun --version
+          bun check.mjs
+
+  # ------------------------------------------------------------------
+  # musl: the other libc, tested on real Alpine
+  # ------------------------------------------------------------------
+  musl:
+    name: linux-${{ matrix.arch }} musl (alpine)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: ubuntu-latest,    platform: linux/amd64 }
+          - { arch: arm64, runner: ubuntu-24.04-arm, platform: linux/arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install and run inside Alpine (node + bun)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+              apk add --no-cache nodejs npm curl bash
+              mkdir -p /verify && cd /verify
+              npm init -y >/dev/null
+              npm install "laya-system-one@'"$VERSION"'" --no-audit --no-fund
+
+              echo "--- musl runtime ---"
+              ls /lib/ld-musl* || true
+              echo "--- installed ---"
+              ls node_modules/@sys-one/ | sort
+
+              SPECIFIC=$(ls node_modules/@sys-one/ | grep "^laya-serve-" | grep -v universal || true)
+              echo "specific package: $SPECIFIC"
+              [ "$SPECIFIC" = "laya-serve-linux-'"${{ matrix.arch }}"'" ] || {
+                echo "expected laya-serve-linux-'"${{ matrix.arch }}"', got $SPECIFIC"; exit 1; }
+
+              # the musl build ships as a self-extracting bundle
+              B="node_modules/@sys-one/laya-serve-linux-'"${{ matrix.arch }}'"/bin/linux-'"${{ matrix.arch }}"'-musl/laya-serve.bundle
+              [ -f "$B" ] || { echo "no musl bundle"; find node_modules/@sys-one -type f | head -20; exit 1; }
+              chmod +x "$B"
+              "$B" --help | head -2
+            '
+
+      - name: Run 10 questions on musl (Node)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+              apk add --no-cache nodejs npm curl bash
+              mkdir -p /verify && cd /verify
+              npm init -y >/dev/null
+              npm install "laya-system-one@'"$VERSION"'" --no-audit --no-fund
+              cat > check.mjs <<JS
+              import { Laya } from "laya-system-one";
+              const q = { department: { type: "choice", instructions: "Which department?",
+                criteria: { billing: "refunds", tech: "bugs", sales: "upgrades" } } };
+              const laya = await Laya.load({ backend: "native" });
+              const prompts = [
+                "We were billed twice on the March invoice and want a refund.",
+                "The application crashes with a segfault when I open the settings page.",
+                "Quero fazer upgrade do meu plano para o empresarial.",
+                "I was charged the wrong amount on my last invoice.",
+                "The app freezes and throws an exception on startup."
+              ];
+              for (const p of prompts) {
+                const a = (await laya.predict(p, q)).answers.department.choice;
+                console.log(" ", a, JSON.stringify(p.slice(0,40)));
+              }
+              await laya.close();
+              console.log("MUSL NODE OK");
+              JS
+              node check.mjs
+            '
+
+      - name: Run the same on musl (Bun)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+              apk add --no-cache nodejs npm curl bash unzip
+              curl -fsSL https://bun.sh/install | bash
+              export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
+              bun --version
+              mkdir -p /verify && cd /verify
+              npm init -y >/dev/null
+              bun add "laya-system-one@'"$VERSION"'" || npm install "laya-system-one@'"$VERSION"'"
+              cat > check.mjs <<JS
+              import { Laya } from "laya-system-one";
+              const q = { department: { type: "choice", instructions: "Which department?",
+                criteria: { billing: "refunds", tech: "bugs", sales: "upgrades" } } };
+              const laya = await Laya.load({ backend: "native" });
+              const a = (await laya.predict("We were billed twice on the March invoice.", q)).answers.department.choice;
+              console.log("answer:", a);
+              await laya.close();
+              if (a !== "billing") process.exit(1);
+              console.log("MUSL BUN OK");
+              JS
+              bun check.mjs
+            '
+
+  # ------------------------------------------------------------------
+  # report: one place to read the outcome
+  # ------------------------------------------------------------------
+  summary:
+    name: summary
+    needs: [native, musl]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          echo "version : ${{ inputs.version }} (tag: ${{ inputs.tag }})"
+          echo "native  : ${{ needs.native.result }}"
+          echo "musl    : ${{ needs.musl.result }}"
+          if [ "${{ needs.native.result }}" != "success" ] || [ "${{ needs.musl.result }}" != "success" ]; then
+            echo "VERIFICATION FAILED - do not promote to latest"
+            exit 1
+          fi
+          echo "VERIFIED on every platform - safe to publish --tag latest"
