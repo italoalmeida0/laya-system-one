@@ -105,6 +105,7 @@ test('all platform binaries ship when dist/bin is present', () => {
     'dist/bin/linux-x64/laya-serve',
     'dist/bin/linux-arm64/laya-serve',
     'dist/bin/darwin-arm64/laya-serve',
+    'dist/bin/darwin-x64/laya-serve',
     'dist/bin/linux-x64-musl/laya-serve.bundle',
     'dist/bin/linux-arm64-musl/laya-serve.bundle'
   ];

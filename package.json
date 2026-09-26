@@ -17,6 +17,7 @@
     "dist/bin/linux-x64-musl/laya-serve.bundle",
     "dist/bin/linux-arm64/",
     "dist/bin/linux-arm64-musl/laya-serve.bundle",
+    "dist/bin/darwin-x64/",
     "dist/bin/darwin-arm64/",
     "src/",
     "models/rl_agent_config.json",

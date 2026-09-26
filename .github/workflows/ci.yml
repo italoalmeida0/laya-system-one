@@ -50,6 +50,7 @@ jobs:
           - { name: 'win-x64 node22',    os: windows-latest,    node: 22.x }
           - { name: 'win-arm64 node22',  os: windows-11-arm,    node: 22.x }
           - { name: 'mac-arm64 node22',  os: macos-latest,      node: 22.x }
+          - { name: 'mac-x64 node22',    os: macos-15-intel,    node: 22.x }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -78,6 +79,70 @@ jobs:
       - run: npm run tokenizer:diff
 
   # ------------------------------------------------------------------
+  # musl full stack: the OTHER libc. Built natively inside Alpine with the
+  # musl-native onnxruntime libs from the Alpine repo (the PyPI .so is
+  # glibc-linked and can never load there), then the whole suite runs on it.
+  # ------------------------------------------------------------------
+  musl-full:
+    name: full stack (linux-${{ matrix.arch }} musl)
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, runner: ubuntu-latest, triple: x86_64-unknown-linux-musl }
+          - { arch: arm64, runner: ubuntu-24.04-arm, triple: aarch64-unknown-linux-musl }
+    runs-on: ${{ matrix.runner }}
+    container: node:22-alpine
+    env:
+      LAYA_REQUIRE_MODEL: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl toolchain + musl-native ORT libs
+        run: |
+          apk add --no-cache build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
+          ls -la /usr/lib/libonnxruntime* || true
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+
+      - name: Build laya-serve (musl)
+        env:
+          ORT_LIB_PATH: /usr/lib
+          ORT_PREFER_DYNAMIC_LINK: '1'
+        run: cargo build --release --target ${{ matrix.triple }} --manifest-path native/laya-serve/Cargo.toml
+
+      - name: Use the freshly built binary (no silent wasm fallback)
+        run: |
+          BIN="$GITHUB_WORKSPACE/native/laya-serve/target/${{ matrix.triple }}/release/laya-serve"
+          chmod +x "$BIN"
+          ldd "$BIN" || true
+          echo "LAYA_SERVE_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Restore model cache
+        uses: actions/cache@v6
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire model (verified download)
+        run: npm run model:acquire
+
+      - run: npm run test:integration
+      - run: npm run test:e2e
+      - run: node tools/bench.js --backend native --questions 5 --json bench-native.json
+
+      - name: Upload benchmark
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-linux-${{ matrix.arch }}-musl
+          path: bench-native.json
+          retention-days: 30
+
+  # ------------------------------------------------------------------
   # full stack: build the native binary (PRIMARY backend), fetch the real
   # model, then run integration + e2e + model chunks + install simulation
   # + latency benchmark + Bun. Tests fail if the binary is missing.
@@ -94,6 +159,7 @@ jobs:
           - { name: 'win-x64',        os: windows-latest,    target: x86_64-pc-windows-msvc,        out: dist/bin/win32-x64/laya-serve.exe }
           - { name: 'win-arm64',      os: windows-11-arm,    target: aarch64-pc-windows-msvc,       out: dist/bin/win32-arm64/laya-serve.exe }
           - { name: 'mac-arm64',      os: macos-latest,      target: aarch64-apple-darwin,          out: dist/bin/darwin-arm64/laya-serve }
+          - { name: 'mac-x64',        os: macos-15-intel,    target: x86_64-apple-darwin,           out: dist/bin/darwin-x64/laya-serve }
     runs-on: ${{ matrix.os }}
     env:
       LAYA_REQUIRE_MODEL: '1'

@@ -28,7 +28,7 @@ runs:
         STAGE='${{ inputs.stage-dir }}'
         mkdir -p dist/bin
         failed=0
-        for plat in win32-x64 win32-arm64 linux-x64 linux-arm64 darwin-arm64; do
+        for plat in win32-x64 win32-arm64 linux-x64 linux-arm64 darwin-arm64 darwin-x64; do
           exe=laya-serve
           case "$plat" in win32-*) exe=laya-serve.exe ;; esac
           mkdir -p "dist/bin/$plat"
