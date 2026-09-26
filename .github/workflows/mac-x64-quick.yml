@@ -1,0 +1,80 @@
+name: mac-x64 quick
+# Fast loop for the mac-x64 (Intel) target only: build laya-serve with the
+# mac-x64-legacy feature + official 1.22.0 dylib, then run the model-backed
+# suites. Trigger manually while iterating; the full matrix in ci.yml stays
+# the gate for merges.
+on:
+  workflow_dispatch:
+
+jobs:
+  mac-x64:
+    name: full stack (mac-x64)
+    runs-on: macos-15-intel
+    env:
+      LAYA_REQUIRE_MODEL: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: 'x86_64-apple-darwin' }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: native/laya-serve }
+
+      - name: Provide ORT libs for mac-x64 (no ort-sys prebuilt)
+        run: |
+          curl -sL -o /tmp/ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz"
+          mkdir -p "$GITHUB_WORKSPACE/ort-libs"
+          tar -xzf /tmp/ort.tgz -C "$GITHUB_WORKSPACE/ort-libs" --strip-components=1
+          find "$GITHUB_WORKSPACE/ort-libs" -name 'libonnxruntime*.dylib' -exec cp {} "$GITHUB_WORKSPACE/ort-libs/" \;
+          ls -la "$GITHUB_WORKSPACE/ort-libs" | head
+
+      - name: Build laya-serve (primary backend)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ORT_LIB_PATH="$GITHUB_WORKSPACE/ort-libs"
+          export ORT_PREFER_DYNAMIC_LINK=1
+          cargo build --release --no-default-features --features mac-x64-legacy --target x86_64-apple-darwin --manifest-path native/laya-serve/Cargo.toml
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bin/darwin-x64
+          cp native/laya-serve/target/x86_64-apple-darwin/release/laya-serve dist/bin/darwin-x64/
+          chmod +x dist/bin/darwin-x64/laya-serve
+          cp ort-libs/libonnxruntime*.dylib dist/bin/darwin-x64/
+          for dylib in dist/bin/darwin-x64/libonnxruntime*.dylib; do
+            install_name_tool -id "@loader_path/$(basename "$dylib")" "$dylib"
+          done
+          for ref in $(otool -L dist/bin/darwin-x64/laya-serve | awk '/libonnxruntime/{print $1}'); do
+            install_name_tool -change "$ref" "@loader_path/$(basename "$ref")" dist/bin/darwin-x64/laya-serve
+          done
+          otool -L dist/bin/darwin-x64/laya-serve
+          dist/bin/darwin-x64/laya-serve --help 2>&1 | head -5
+
+      - run: npm ci
+
+      - name: Restore model cache
+        uses: actions/cache@v6
+        with:
+          path: models/model.onnx
+          key: model-${{ hashFiles('models/model.manifest.json') }}
+
+      - name: Acquire model (verified download)
+        run: npm run model:acquire
+
+      - name: Native binary is required (no silent wasm fallback)
+        run: node -e "import('./src/laya-native.js').then(m=>{console.log('platform slot:',m.shippedPlatformDir(),'| musl:',m.isMusl(),'| bundled:',m.hasBundledBinary());if(!m.hasBundledBinary())process.exit(1)})"
+
+      - run: npm run test:integration
+      - run: npm run test:e2e
+      - run: node tools/bench.js --backend native --questions 5 --json bench-native.json
+
+      - name: Upload benchmark
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-mac-x64
+          path: bench-native.json
+          retention-days: 30
