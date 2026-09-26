@@ -166,17 +166,21 @@ npx laya-system-one --port 8080 --backend native
 
 `npm run bench` measures it on your own hardware and writes a JSON report.
 
-Measured by CI on every platform we ship a binary for (Node 22, the bundled
-`laya-serve` binary, 4 questions per call):
+Measured by CI on every platform we ship a binary for (the bundled
+`laya-serve` binary, 4 questions per call). Shared GitHub runners vary
+~20% between runs, so treat these as orders of magnitude, not promises -
+run `npm run bench` on your own hardware for exact numbers:
 
 | platform | init | cold question | warm avg (4 q) | warm p50 / p95 | 1 q per call | throughput |
 |---|---|---|---|---|---|---|
-| **linux-x64** (glibc) | 1.5 s | 281 ms | 214 ms | 210 / 245 | 52 ms | 19.3 q/s |
-| **linux-arm64** (glibc) | 1.5 s | 205 ms | 143 ms | 139 / 161 | 34 ms | 29.2 q/s |
-| **win-x64** | 1.6 s | 119 ms | 100 ms | 98 / 116 | 29 ms | 34.3 q/s |
-| **win-arm64** | 1.5 s | 237 ms | 181 ms | 176 / 212 | 47 ms | 21.3 q/s |
-| **mac-arm64** | 2.3 s | 434 ms | 273 ms | 272 / 316 | 56 ms | 18.0 q/s |
-| **mac-x64** (Intel, ORT 1.23) | 2.9 s | 295 ms | 260 ms | 258 / 272 | 65 ms | 15.5 q/s |
+| **linux-arm64** (musl) | 1.9 s | 247 ms | 154 ms | 143 / 205 | 36 ms | 28.1 q/s |
+| **linux-arm64** (glibc) | 1.6 s | 184 ms | 145 ms | 142 / 163 | 40 ms | 24.9 q/s |
+| **win-x64** | 1.7 s | 175 ms | 149 ms | 142 / 175 | 40 ms | 24.8 q/s |
+| **win-arm64** | 1.4 s | 231 ms | 178 ms | 174 / 204 | 47 ms | 21.2 q/s |
+| **mac-arm64** | 1.3 s | 268 ms | 220 ms | 218 / 250 | 51 ms | 19.5 q/s |
+| **linux-x64** (musl) | 2.3 s | 387 ms | 253 ms | 239 / 311 | 59 ms | 16.9 q/s |
+| **linux-x64** (glibc) | 2.5 s | 331 ms | 264 ms | 259 / 322 | 63 ms | 15.8 q/s |
+| **mac-x64** (Intel, ORT 1.23) | 2.9 s | 387 ms | 360 ms | 356 / 398 | 84 ms | 11.9 q/s |
 
 `init` is loading the model, `cold` is the very first question (warmup and
 arena allocation), and the warm numbers are the sustained latency.
