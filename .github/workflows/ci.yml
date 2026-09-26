@@ -93,34 +93,13 @@ jobs:
           - { arch: x64, runner: ubuntu-latest, triple: x86_64-unknown-linux-musl }
           - { arch: arm64, runner: ubuntu-24.04-arm, triple: aarch64-unknown-linux-musl }
     runs-on: ${{ matrix.runner }}
-    container: node:22-alpine
     env:
       LAYA_REQUIRE_MODEL: '1'
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install musl toolchain + musl-native ORT libs
-        run: |
-          apk add --no-cache build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
-          ls -la /usr/lib/libonnxruntime* || true
-
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
-
-      - name: Build laya-serve (musl)
-        env:
-          ORT_LIB_PATH: /usr/lib
-          ORT_PREFER_DYNAMIC_LINK: '1'
-        run: cargo build --release --target ${{ matrix.triple }} --manifest-path native/laya-serve/Cargo.toml
-
-      - name: Use the freshly built binary (no silent wasm fallback)
-        run: |
-          BIN="$GITHUB_WORKSPACE/native/laya-serve/target/${{ matrix.triple }}/release/laya-serve"
-          chmod +x "$BIN"
-          ldd "$BIN" || true
-          echo "LAYA_SERVE_BIN=$BIN" >> "$GITHUB_ENV"
-
-      - run: npm ci
 
       - name: Restore model cache
         uses: actions/cache@v6
@@ -128,12 +107,37 @@ jobs:
           path: models/model.onnx
           key: model-${{ hashFiles('models/model.manifest.json') }}
 
-      - name: Acquire model (verified download)
-        run: npm run model:acquire
+      - name: Acquire model on the host (cached, shared with the container)
+        run: npm ci && npm run model:acquire
 
-      - run: npm run test:integration
-      - run: npm run test:e2e
-      - run: node tools/bench.js --backend native --questions 5 --json bench-native.json
+      # The musl binary must be built and run on real musl with the musl-native
+      # onnxruntime libs (the PyPI .so is glibc-linked and can never load on
+      # Alpine - see BUILD.md). A job-level `container: alpine` would break the
+      # JS actions (their node is glibc), so the Alpine work runs inside Docker
+      # and everything else stays on the host.
+      - name: Build + test inside Alpine (musl)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
+            apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
+            echo "--- musl runtime ---"
+            ls /lib/ld-musl* || true
+            ls -la /usr/lib/libonnxruntime* || true
+
+            echo "--- build laya-serve (musl) ---"
+            cargo build --release --target ${{ matrix.triple }} --manifest-path native/laya-serve/Cargo.toml
+
+            BIN="$PWD/native/laya-serve/target/${{ matrix.triple }}/release/laya-serve"
+            chmod +x "$BIN"
+            file "$BIN" || true
+            export LAYA_SERVE_BIN="$BIN"
+
+            echo "--- install + test ---"
+            npm ci
+            npm run model:acquire
+            npm run test:integration
+            npm run test:e2e
+            node tools/bench.js --backend native --questions 5 --json bench-native.json
+          '
 
       - name: Upload benchmark
         uses: actions/upload-artifact@v7
