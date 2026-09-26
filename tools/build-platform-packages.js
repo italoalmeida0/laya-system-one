@@ -28,7 +28,7 @@
  * platform matches none of the specific packages (odd libc, unknown arch,
  * a distro npm mismatches), npm installs the universal one instead.
  *
- *   node tools/build-platform-packages.js build [--version 1.1.0]
+ *   node tools/build-platform-packages.js build [--only <slot>]...
  *   node tools/build-platform-packages.js pack  [--out dist/release/tarballs]
  *   node tools/build-platform-packages.js list
  */
@@ -201,28 +201,47 @@ function stageSlots(slots, pkgDir) {
 }
 
 function cmdBuild(args) {
-  const version = args.version || '1.1.0';
+  // Default to the version in package.json: a build must never invent one,
+  // and the workflow stamps that file before calling this.
+  const version = args.version || JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  // `--only <slot>` builds a single platform package (plus the universal one,
+  // which by definition carries everything). CI passes it so each job uploads
+  // exactly the package it produced: without it, every job writes all seven
+  // package.json files, six of them empty, and whichever artifact is copied
+  // last decides what the release contains.
+  const only = args.only ? [].concat(args.only) : null;
+  const wanted = PACKAGES.filter((pkg) => {
+    if (!only) return true;
+    if (only.includes('universal')) return pkg.source === null;
+    return pkg.source !== null && [].concat(pkg.source).some((slot) => only.includes(slot));
+  });
+
   fs.rmSync(OUT_DIR, { recursive: true, force: true });
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   let built = 0;
-  for (const pkg of PACKAGES) {
+  for (const pkg of wanted) {
     const pkgDir = path.join(OUT_DIR, pkg.name.replace('/', '__'));
+    const slots = pkg.source === null ? ALL_SOURCES : [].concat(pkg.source);
+    const staged = stageSlots(slots, pkgDir);
+
+    if (staged.length === 0) {
+      console.log(`[pkgs] SKIP ${pkg.name.padEnd(38)} (no binary in dist/bin)`);
+      fs.rmSync(pkgDir, { recursive: true, force: true });
+      continue;
+    }
+
+    // only write metadata for a package that actually has a payload
     fs.mkdirSync(pkgDir, { recursive: true });
     fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify(packageJsonFor(pkg, version), null, 2) + '\n');
     fs.writeFileSync(path.join(pkgDir, 'README.md'), readmeFor(pkg));
     const license = path.join(ROOT, 'LICENSE');
     if (fs.existsSync(license)) fs.copyFileSync(license, path.join(pkgDir, 'LICENSE'));
 
-    const slots = pkg.source === null ? ALL_SOURCES : [].concat(pkg.source);
-    const staged = stageSlots(slots, pkgDir);
-
-    const exists = staged.length > 0;
-    console.log(`[pkgs] ${exists ? 'ok  ' : 'SKIP'} ${pkg.name.padEnd(38)} ${staged.length} file(s)`);
-    if (staged.length) built++;
+    console.log(`[pkgs] ok   ${pkg.name.padEnd(38)} ${staged.length} file(s)`);
+    built++;
   }
-  console.log(`\n[pkgs] ${built}/${PACKAGES.length} packages materialised in ${path.relative(ROOT, OUT_DIR)}`);
-  console.log('[pkgs] skipping packages whose binary is not in dist/bin is expected on a partial build.');
+  console.log(`\n[pkgs] ${built} package(s) materialised in ${path.relative(ROOT, OUT_DIR)} (version ${version})`);
 }
 
 function cmdPack(args) {

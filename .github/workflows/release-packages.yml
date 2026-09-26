@@ -109,7 +109,7 @@ jobs:
         # install, so a plain `npm install` is both correct and enough.
         run: npm install --no-audit --no-fund --ignore-scripts
       - name: Materialise this platform's package
-        run: node tools/build-platform-packages.js build
+        run: node tools/build-platform-packages.js build --only '${{ matrix.name }}'
       - name: Smoke the packaged binary
         shell: bash
         run: |
@@ -208,7 +208,7 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 \
             sh -c 'dist/bin/linux-${{ matrix.arch }}-musl/laya-serve.bundle --help | head -3'
       - name: Materialise this platform's package
-        run: node tools/build-platform-packages.js build
+        run: node tools/build-platform-packages.js build --only 'linux-${{ matrix.arch }}'
       - name: Upload this platform's package
         uses: actions/upload-artifact@v7
         with:
@@ -225,6 +225,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Stamp the requested version
+        if: inputs.version != ''
+        run: node tools/set-version.js ${{ inputs.version }}
+
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
       - name: Install (no dependencies to install - see note)
@@ -273,6 +277,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Stamp the requested version
+        if: inputs.version != ''
+        run: node tools/set-version.js ${{ inputs.version }}
+
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm }
       - name: Install (no dependencies to install - see note)
@@ -304,6 +312,10 @@ jobs:
           fi
           echo "--- binaries ---"; ls dist/release/binaries
           echo "--- chunks ---";   ls dist/release/model-chunks | head -3
+
+          # the universal package needs every binary, so it is assembled here
+          # rather than in the per-platform jobs
+          node tools/build-platform-packages.js build --only universal
           node tools/publish-all.js inspect
 
       - name: Verify every platform package has a binary
