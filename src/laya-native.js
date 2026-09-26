@@ -181,7 +181,11 @@ export class NativeServer {
           resolve(this);
         }
       });
-      proc.stderr.on('data', () => { /* logs; ignore unless debugging */ });
+      let errBuf = '';
+      proc.stderr.on('data', (d) => {
+        // keep the tail for diagnostics; too chatty to forward by default
+        errBuf = (errBuf + d.toString()).slice(-16000);
+      });
       proc.on('error', (err) => {
         clearTimeout(timer);
         reject(new Error(`failed to spawn laya-serve (${bin}): ${err.message}`));
@@ -189,7 +193,13 @@ export class NativeServer {
       proc.on('exit', (code) => {
         if (!this.url) {
           clearTimeout(timer);
-          reject(new Error(`laya-serve exited before ready (code ${code}, bin: ${bin})`));
+          // Include the child's stderr: a Rust panic exits 101 and the reason
+          // is only visible there, so without it debugging CI is guesswork.
+          const detail = errBuf.trim().slice(-2000);
+          reject(new Error(
+            `laya-serve exited before ready (code ${code}, bin: ${bin})` +
+            (detail ? `\n--- laya-serve stderr ---\n${detail}` : '\n(no stderr)')
+          ));
         }
       });
     });

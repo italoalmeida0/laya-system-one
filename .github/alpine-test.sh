@@ -11,7 +11,7 @@ echo 'https://dl-cdn.alpinelinux.org/alpine/edge/main' > /etc/apk/repositories
 echo 'https://dl-cdn.alpinelinux.org/alpine/edge/community' >> /etc/apk/repositories
 cat /etc/apk/repositories
 
-apk add --no-cache nodejs npm build-base rust cargo git curl python3 onnxruntime onnxruntime-dev
+apk add --no-cache nodejs npm build-base rust cargo git curl python3 pkgconf openssl-dev openssl-libs-static onnxruntime onnxruntime-dev
 
 echo "--- musl runtime ---"
 ls /lib/ld-musl* || true
