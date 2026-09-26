@@ -10,7 +10,11 @@ name = "laya-serve"
 path = "src/main.rs"
 
 [dependencies]
-# ONNX Runtime (downloads prebuilt C libs at build time, links statically)
+# ONNX Runtime (downloads prebuilt C libs at build time, links statically).
+# `half` is needed for the INT8 model; the rest stays on ort's defaults
+# (api-27, which matches the 1.28 prebuilts ort-sys downloads). The mac-x64
+# legacy build overrides this via `--no-default-features --features
+# mac-x64-legacy` (see the feature below and ci.yml).
 ort = { version = "2.0.0-rc.10", features = ["half"] }
 # HF tokenizers with fancy-regex (pure Rust) instead of onig (onig_sys
 # bundles+compiles C code — breaks cross builds; our tokenizer.json needs
@@ -27,6 +31,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI args
 clap = { version = "4", features = ["derive"] }
+
+[features]
+# mac-x64 legacy: ort-sys ships no prebuilt for x86_64-apple-darwin, and
+# Microsoft stopped publishing osx-x86_64 dylibs after ORT 1.23 (the last one
+# supports up to API 22, while ort's default asks for API 27). This feature
+# rebuilds ort against API 22 only, which covers everything laya-serve uses
+# (init + Session + inputs + run). The CI links the official 1.22.0 dylib
+# for this target (see .github/workflows/ci.yml).
+mac-x64-legacy = ["ort/api-22", "ort/half", "ort/std", "ort/ndarray", "ort/copy-dylibs"]
 
 [build-dependencies]
 cc = "1"

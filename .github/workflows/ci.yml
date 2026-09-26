@@ -182,8 +182,14 @@ jobs:
           if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
             export ORT_LIB_PATH="$GITHUB_WORKSPACE/ort-libs"
             export ORT_PREFER_DYNAMIC_LINK=1
+            # ort's default asks for API 27 (matches the 1.28 prebuilts
+            # ort-sys downloads), but the last official osx-x86_64 dylib is
+            # 1.22.0 (API 22). The mac-x64-legacy feature rebuilds ort
+            # against API 22, which covers everything laya-serve uses.
+            cargo build --release --no-default-features --features mac-x64-legacy --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
+          else
+            cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
           fi
-          cargo build --release --target ${{ matrix.target }} --manifest-path native/laya-serve/Cargo.toml
 
       - name: Stage binary
         shell: bash
