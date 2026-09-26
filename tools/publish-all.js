@@ -77,15 +77,114 @@ function cmdDownload(args) {
     console.error('       (find it with: gh run list --workflow=release-packages.yml)');
     process.exit(1);
   }
-  fs.mkdirSync(RELEASE_DIR, { recursive: true });
-  console.log(`[publish] downloading artifacts of run ${runId} into dist/release/ ...`);
-  const status = run('gh', ['run', 'download', String(runId), '--dir', RELEASE_DIR]);
+
+  // download into a staging dir first: `gh run download` writes one directory
+  // per artifact, while the publish tool expects dist/release/{binaries,
+  // model-chunks}/. Copying explicitly also lets us refuse a half-arrived
+  // release instead of publishing whatever happened to be there.
+  const staging = path.join(RELEASE_DIR, '..', 'artifacts');
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true });
+
+  console.log(`[publish] downloading artifacts of run ${runId} ...`);
+  const status = run('gh', ['run', 'download', String(runId), '--dir', staging]);
   if (status !== 0) {
     console.error('[publish] gh run download failed. Is the gh CLI logged in (gh auth status)?');
+    console.error('[publish] if the run has expired, re-run the build: gh workflow run release-packages.yml');
     process.exit(1);
   }
-  console.log('[publish] done. Inspecting what arrived:');
+
+  fs.mkdirSync(BIN_DIR, { recursive: true });
+  fs.mkdirSync(CHUNK_DIR, { recursive: true });
+
+  let binaries = 0;
+  let chunks = 0;
+  for (const entry of fs.readdirSync(staging, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const from = path.join(staging, entry.name);
+    if (entry.name.startsWith('binaries-')) {
+      // every binaries-* artifact carries dist/release/binaries/<pkg>/
+      for (const pkg of packageDirs(from)) {
+        const dest = path.join(BIN_DIR, path.basename(pkg));
+        fs.cpSync(pkg, dest, { recursive: true });
+        binaries++;
+      }
+    } else if (entry.name === 'model-chunks') {
+      for (const pkg of packageDirs(from)) {
+        const dest = path.join(CHUNK_DIR, path.basename(pkg));
+        fs.cpSync(pkg, dest, { recursive: true });
+        chunks++;
+      }
+    }
+  }
+  fs.rmSync(staging, { recursive: true, force: true });
+
+  console.log(`[publish] staged ${binaries} binary package(s) and ${chunks} chunk package(s)`);
+  if (binaries === 0 && chunks === 0) {
+    console.error('[publish] nothing usable arrived - check that the run succeeded');
+    process.exit(1);
+  }
+
+  // The build ran with a specific version; publishing is frequently done under
+  // a different one (1.1.0-alpha.0 while the packages are still 1.1.0). npm
+  // silently skips an optionalDependency whose version does not exist, so a
+  // mismatch here would ship an entry package that installs nothing.
   cmdInspect();
+}
+
+/**
+ * Check that everything about to be published agrees on a version.
+ *
+ * The artifacts were built with whatever version the workflow was told to use
+ * (`gh workflow run release-packages.yml -f version=...`). If package.json has
+ * moved on since, publishing them under the new number would ship an entry
+ * package whose optionalDependencies point at packages that do not exist -
+ * and npm silently skips a missing optional, so the install would look fine
+ * and then fail to find a binary. Refusing is the only safe answer.
+ */
+function checkVersions() {
+  const want = readMain().version;
+  const problems = [];
+
+  const seen = new Set();
+  for (const [kind, dirs] of [['binary', packageDirs(BIN_DIR)], ['chunk', packageDirs(CHUNK_DIR)]]) {
+    for (const dir of dirs) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      seen.add(pkg.name);
+      if (pkg.version !== want) {
+        problems.push(`${kind} package ${pkg.name} is ${pkg.version}, but package.json says ${want}`);
+      }
+    }
+  }
+
+  if (problems.length) {
+    console.error('\n[publish] version mismatch - refusing to publish:');
+    for (const p of problems.slice(0, 6)) console.error(`  - ${p}`);
+    if (problems.length > 6) console.error(`  ... and ${problems.length - 6} more`);
+    console.error(`\n[publish] the artifacts were built for one version and package.json says another.`);
+    console.error(`[publish] either publish under the built version:`);
+    console.error(`[publish]   npm version <the-built-version> --no-git-tag-version`);
+    console.error(`[publish] or rebuild for this one:`);
+    console.error(`[publish]   gh workflow run release-packages.yml -f version=${want}`);
+    process.exit(1);
+  }
+
+  // the entry package must depend on exactly what we are about to publish
+  const main = readMain();
+  const opt = main.optionalDependencies || {};
+  const declared = new Set(Object.keys(opt));
+  for (const name of seen) {
+    if (!declared.has(name)) problems.push(`package.json does not list ${name} as an optionalDependency`);
+  }
+  for (const [name, ver] of Object.entries(opt)) {
+    if (ver !== want) problems.push(`package.json pins ${name} at ${ver}, expected ${want}`);
+  }
+  if (problems.length) {
+    console.error('\n[publish] package.json does not match the staged packages:');
+    for (const p of problems.slice(0, 6)) console.error(`  - ${p}`);
+    process.exit(1);
+  }
+  console.log(`[publish] version ${want} consistent across ${seen.size} package(s) ✔`);
 }
 
 function cmdInspect() {
@@ -115,6 +214,7 @@ function cmdInspect() {
     process.exit(1);
   }
   console.log('\n[inspect] all packages look publishable ✔');
+  checkVersions();
 }
 
 async function cmdPublish(args) {
@@ -139,6 +239,10 @@ async function cmdPublish(args) {
     process.exit(1);
   }
   console.log(`[publish] logged in as ${who.stdout.trim()}, tag=${tag}${dryRun ? ' (dry run)' : ''}\n`);
+
+  // never publish a half-matched set: npm skips a missing optionalDependency
+  // silently, so a version skew ships an install that finds no binary.
+  checkVersions();
 
   // leaf packages first: the model chunks and the platform binaries must
   // exist before the main package that depends on them.

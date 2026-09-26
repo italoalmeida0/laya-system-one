@@ -14,6 +14,11 @@ name: build packages
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.1.0-alpha.0). Empty = package.json as committed.'
+        required: false
+        default: ''
   push:
     branches: [main]
     tags: ['v*']
@@ -41,6 +46,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - name: Stamp the requested version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          WANT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const v = process.env.WANT;
+            for (const f of ["package.json", "package-lock.json"]) {
+              if (!fs.existsSync(f)) continue;
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              if (j.packages && j.packages[""]) j.packages[""].version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\\n");
+            }
+            console.log("version stamped:", v);
+          '
+
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: '${{ matrix.target }}' }
       - uses: Swatinem/rust-cache@v2
@@ -132,6 +157,26 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      - name: Stamp the requested version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          WANT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const v = process.env.WANT;
+            for (const f of ["package.json", "package-lock.json"]) {
+              if (!fs.existsSync(f)) continue;
+              const j = JSON.parse(fs.readFileSync(f, "utf8"));
+              j.version = v;
+              if (j.packages && j.packages[""]) j.packages[""].version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\\n");
+            }
+            console.log("version stamped:", v);
+          '
+
       - name: Build in Alpine and copy the musl libs it links
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
@@ -214,7 +259,8 @@ jobs:
 
       - name: Split into chunk packages + reassemble to prove it round-trips
         run: |
-          node tools/model-chunks.js build --chunk-mb 24
+          V=$(node -p 'require("./package.json").version')
+          node tools/model-chunks.js build --chunk-mb 24 --model-version "$V"
           node tools/model-chunks.js assemble --out "$RUNNER_TEMP/model.from-chunks.onnx"
           node tools/model-chunks.js verify --model "$RUNNER_TEMP/model.from-chunks.onnx"
           # Round-tripping is not enough: the reassembled file must still
