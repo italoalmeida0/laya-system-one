@@ -241,19 +241,21 @@ export class Laya {
         ins = JSON.stringify(ins);
       }
 
-      // Choice criteria are canonicalized by sorting their keys: the native
-      // backend iterates a BTreeMap (sorted) while JS objects keep insertion
-      // order, so without this the two backends would place the options at
-      // different marker positions and answer differently. Sorting also makes
-      // the answer independent of the key order the client happened to send.
+      // The option order is preserved, not sorted.
+      //
+      // It used to be sorted, to make the JS and the native backend agree:
+      // serde_json's default object is a BTreeMap, so Rust saw the keys in
+      // alphabetical order while JS kept insertion order. That made the two
+      // backends agree with each other and disagree with the reference
+      // implementation, which keeps the caller's order - and the order is part
+      // of the prompt, so it changes the answer. The Rust side now preserves
+      // order too (serde_json/preserve_order), so both follow the caller.
       const internalQ = {
         t: qtype,
         ins,
         crit: qtype === 'choice' && Array.isArray(crit)
-          ? Object.fromEntries(crit.map(c => [c, null]).sort())
-          : (qtype === 'choice' && crit && typeof crit === 'object' && !Array.isArray(crit))
-            ? Object.fromEntries(Object.entries(crit).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-            : (crit || {})
+          ? Object.fromEntries(crit.map(c => [c, null]))
+          : (crit || {})
       };
 
       const { ids, markers } = buildSequence(
