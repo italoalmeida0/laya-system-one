@@ -122,12 +122,17 @@ function binaryCandidates() {
   const exe = plat === 'win32' ? 'laya-serve.exe' : 'laya-serve';
   const slots = [];
   for (const arch of arches) {
-    if (plat === 'linux') slots.push(`linux-${arch}-musl`);
-    if (musl) continue; // never fall back to a glibc binary on musl
-    slots.push(`${plat}-${arch}`);
+    // Order matters, and libc decides it: on musl only the musl bundle can
+    // load (the glibc binary has no interpreter), and on glibc the musl
+    // bundle is the wrong build. Never probe both - the earlier version
+    // pushed the musl slot first on every Linux, so a glibc machine picked
+    // the musl bundle and died with "exited before ready".
+    if (plat === 'linux') {
+      slots.push(musl ? `linux-${arch}-musl` : `linux-${arch}`);
+    } else {
+      slots.push(`${plat}-${arch}`);
+    }
   }
-  // the universal package stores glibc builds under the plain slot too, so a
-  // non-musl loop above already covers it; nothing extra to add here.
   return { exe, slots };
 }
 

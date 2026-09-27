@@ -220,6 +220,44 @@ function resolveSlotDir(slot) {
   return null;
 }
 
+/**
+ * Expected magic bytes per platform. A mismatch means the file is not a
+ * binary for that platform at all - usually a mis-copy or a stale build - and
+ * shipping it produces a package that installs and then cannot run.
+ */
+const MAGIC = {
+  win32: [0x4d, 0x5a],                   // MZ
+  linux: [0x7f, 0x45, 0x4c, 0x46],       // \x7fELF
+  darwin: [0xcf, 0xfa, 0xed, 0xfe],      // Mach-O 64 little-endian
+  darwinBE: [0xfe, 0xed, 0xfa, 0xcf]     // Mach-O 64 big-endian (rare)
+};
+
+/**
+ * Check that a staged binary really belongs to its slot.
+ * Returns null when fine, or a human-readable reason when not.
+ */
+function binaryProblem(file, slot) {
+  let head;
+  try {
+    const fd = fs.openSync(file, 'r');
+    head = Buffer.alloc(4);
+    fs.readSync(fd, head, 0, 4, 0);
+    fs.closeSync(fd);
+  } catch (err) {
+    return `unreadable: ${err.message}`;
+  }
+
+  const os = slot.split('-')[0];
+  const matches = (magic) => magic.every((b, i) => head[i] === b);
+
+  if (os === 'win32') return matches(MAGIC.win32) ? null : `not a Windows binary (starts ${head.toString('hex')})`;
+  if (os === 'linux') return matches(MAGIC.linux) ? null : `not a Linux binary (starts ${head.toString('hex')})`;
+  if (os === 'darwin') {
+    return (matches(MAGIC.darwin) || matches(MAGIC.darwinBE)) ? null : `not a macOS binary (starts ${head.toString('hex')})`;
+  }
+  return null;
+}
+
 function stageSlots(slots, pkgDir) {
   const written = [];
   for (const slot of slots) {
@@ -229,6 +267,14 @@ function stageSlots(slots, pkgDir) {
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(slotDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue; // leftover lib/ dirs never ship
+      // the musl bundle is a shell script wrapping the real binary, so its
+      // format is checked after extraction, not here
+      if (!entry.name.endsWith('.bundle')) {
+        const problem = binaryProblem(path.join(slotDir, entry.name), slot);
+        if (problem) {
+          throw new Error(`${slot}: ${entry.name} ${problem} - refusing to package it`);
+        }
+      }
       const out = path.join(dest, entry.name);
       fs.copyFileSync(path.join(slotDir, entry.name), out);
       fs.chmodSync(out, 0o755);
