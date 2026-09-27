@@ -120,6 +120,19 @@ function cmdDownload(args) {
   fs.rmSync(staging, { recursive: true, force: true });
 
   console.log(`[publish] staged ${binaries} binary package(s) and ${chunks} chunk package(s)`);
+
+  // The universal package is not an artifact of its own: the entry job builds
+  // it from the packages it received. Rebuild it here for the same reason -
+  // it needs every slot, and now they are all present.
+  const uniDir = path.join(BIN_DIR, '@sys-one__laya-serve-universal');
+  if (!fs.existsSync(uniDir)) {
+    console.log('[publish] assembling the universal package from the staged binaries');
+    try {
+      run(process.execPath, [path.join(ROOT, 'tools', 'build-platform-packages.js'), 'build', '--only', 'universal']);
+    } catch (err) {
+      console.error(`[publish] could not assemble the universal package: ${err.message}`);
+    }
+  }
   if (binaries === 0 && chunks === 0) {
     console.error('[publish] nothing usable arrived - check that the run succeeded');
     process.exit(1);
