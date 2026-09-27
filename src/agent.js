@@ -33,13 +33,29 @@ export function validateQuestions(questions) {
 }
 
 /**
- * Compute calibrated confidence score from probability distribution.
- * Normalized between 0.0 and 1.0.
+ * Normalized Shannon entropy confidence: 1 - H(p) / log(k).
+ *
+ * How concentrated the whole distribution is, which is what the native binary
+ * reports and what the upstream implementation calls `confidence_from_probs`.
+ *
+ * The previous formula here was `(max(p) - 1/k) / (1 - 1/k)`, which is a
+ * different quantity on a different scale: for [0.9, 0.1] it returned 0.800
+ * where the entropy gives 0.531. The two backends therefore disagreed on the
+ * same answer, and neither matched the reference.
+ *
+ * Note this is NOT the calibrated confidence. Upstream distinguishes
+ * `answer_confidence` (max(p) - the quantity temperature scaling fits and
+ * every calibration figure is computed on) from this one, which "carries no
+ * such guarantee". This package reports the latter, as the native binary does.
  */
 export function confidenceFromProbs(probs, k) {
-  if (k <= 1) return 1.0;
-  const pMax = Math.max(...probs);
-  const conf = (pMax - 1.0 / k) / (1.0 - 1.0 / k);
+  if (k < 2) return 1.0;
+  let h = 0;
+  for (let i = 0; i < k; i++) {
+    const p = probs[i];
+    if (p > 1e-12) h -= p * Math.log(p);
+  }
+  const conf = 1 - h / Math.log(k);
   return Math.min(1.0, Math.max(0.0, conf));
 }
 
