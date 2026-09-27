@@ -137,6 +137,47 @@ console.log(`Laya server running at ${srv.url}/v1/systemone`);
 await srv.close();
 ```
 
+### In the browser
+
+The `wasm` backend runs in a browser. `Laya.load()` picks it automatically
+there — `native` spawns a process, which a browser cannot do — and the model,
+tokenizer and wasm engine are fetched over HTTP:
+
+```html
+<script type="module">
+  import { Laya } from 'https://esm.sh/laya-system-one';
+
+  const laya = await Laya.load({
+    modelDir: '/models/',                       // where model.onnx lives
+    wasmBase: 'https://cdn.example/laya/wasm/'  // optional: wasm from a CDN
+  });
+
+  const out = await laya.predict('We were billed twice and want a refund.', {
+    department: {
+      type: 'choice',
+      instructions: 'Which department should handle this?',
+      criteria: { billing: 'refunds', tech: 'bugs', sales: 'upgrades' }
+    }
+  });
+  console.log(out.answers.department.choice); // "billing"
+</script>
+```
+
+Serve `models/model.onnx` (324 MB) and the `src/wasm-pkg/` directory over HTTP
+with the right content types (`.wasm` as `application/wasm`), and enable
+cross-origin isolation if you want the threaded build. The model is fetched
+once and can be cached by the browser like any other asset.
+
+Two honest notes:
+
+- The wasm backend is roughly **40x slower** than the native binary — a
+  question takes seconds in a browser, not milliseconds. It exists so the
+  browser works at all.
+- The environment detection, the HTTP fetching of the model/tokenizer/wasm
+  bytes and the inline engine are covered by tests on Node. The one step that
+  cannot be — importing the wasm glue over `http:` — is refused by Node's ESM
+  loader, so it is exercised in a browser rather than in CI.
+
 ### `Laya.load(options)` options
 
 | Option | Default | Description |
@@ -314,8 +355,10 @@ default `native` backend. Run `npm run bench` to measure your own machine.
 warm numbers are sustained latency. Shared CI runners vary by ~20% between
 runs, so treat these as orders of magnitude rather than exact figures.
 
-The `wasm` backend is roughly 100x slower — it exists so browsers and unusual
-platforms work at all, not for throughput.
+The `wasm` backend is roughly 40x slower — it exists so browsers and unusual
+platforms work at all, not for throughput. It pads prompts to the smallest of
+a fixed set of sequence lengths rather than one large size, which is worth
+about 4x on short inputs (a 43-token prompt was being padded to 256).
 
 ### Long inputs
 
