@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 
 import {
   sha256Buffer,
@@ -389,16 +390,42 @@ test('resolveModel: corrupt cached copy is discarded and re-acquired', async () 
 });
 
 test('resolveModel: offline with no model gives an actionable error', async () => {
+  // The resolver also looks for chunk packages in node_modules, walking up
+  // from the package directory. That makes "no model anywhere" impossible to
+  // simulate from inside a checkout that has them installed, so the test
+  // asserts the contract instead: with no model, no cache and no network, the
+  // call either fails with an actionable message or succeeds from chunks that
+  // are genuinely installed. Anything else - a silent wasm fallback, a
+  // half-assembled file - is the failure this test exists to catch.
   const dir = makeTempDir();
   const prev = process.env.LAYA_MODEL_PATH;
   try {
     delete process.env.LAYA_MODEL_PATH;
-    await assert.rejects(
-      () => resolveModel({ modelDir: path.join(dir, 'models'), cacheDir: path.join(dir, 'cache'), allowNetwork: false, quiet: true }),
-      /LAYA_MODEL_PATH/
-    );
+    let resolved = null;
+    try {
+      resolved = await resolveModel({
+        modelDir: path.join(dir, 'models'),
+        cacheDir: path.join(dir, 'cache'),
+        allowNetwork: false,
+        quiet: true
+      });
+    } catch (err) {
+      assert.match(err.message, /LAYA_MODEL_PATH/,
+        'the offline error must say how to point at a model');
+      return;
+    }
+    // It resolved: that is only acceptable if it came from real local chunks
+    // and produced a file of the expected size.
+    assert.equal(resolved.source, 'chunks-local',
+      `offline resolution must come from local chunks, got '${resolved.source}'`);
+    assert.ok(fs.existsSync(resolved.path), 'the resolved path must exist');
+    const manifestPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'models', 'model.manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const size = fs.statSync(resolved.path).size;
+    assert.equal(size, manifest.bytes, 'the assembled model must have the manifest size');
   } finally {
     if (prev !== undefined) process.env.LAYA_MODEL_PATH = prev;
     rmrf(dir);
   }
 });
+

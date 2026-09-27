@@ -26,7 +26,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Resolved lazily rather than at module scope: esm.sh bundles this file into
+// the browser entry, and `fileURLToPath(import.meta.url)` there throws
+// "The URL must be of scheme file" (import.meta.url is https:) before any
+// code runs - which is what broke `import { Laya } from 'esm.sh/...'`.
+let _dirname = null;
+function pkgDir() {
+  if (_dirname === null) _dirname = path.dirname(fileURLToPath(import.meta.url));
+  return _dirname;
+}
 
 /**
  * True when the process runs on musl (Alpine, some containers).
@@ -94,7 +102,7 @@ export function resolveBinaryOrNull() {
 
     // 4) local dev build
     for (const rel of [path.join('dist', 'bin', slot), path.join('bin', slot)]) {
-      const root = path.join(__dirname, '..', rel);
+      const root = path.join(pkgDir(), '..', rel);
       if (slot.endsWith('-musl')) {
         const bundle = path.join(root, 'laya-serve.bundle');
         if (fs.existsSync(bundle)) return ensureExecutable(bundle);
@@ -182,7 +190,7 @@ function ensureExecutable(bin) {
  * project's deps and workspaces alike.
  */
 function findInstalledPackage(name) {
-  let dir = __dirname;
+  let dir = pkgDir();
   for (let i = 0; i < 8; i++) {
     const candidate = path.join(dir, 'node_modules', ...name.split('/'));
     if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
@@ -226,7 +234,7 @@ export function hasBundledBinary() {
 }
 export class NativeServer {
   constructor(options = {}) {
-    this.modelDir = options.modelDir || path.join(__dirname, '..', 'models');
+    this.modelDir = options.modelDir || path.join(pkgDir(), '..', 'models');
     this.host = options.host || '127.0.0.1';
     this.port = options.port ?? 0;
     this.apiKey = options.apiKey || null;

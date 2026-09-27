@@ -24,7 +24,14 @@ import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Resolved lazily: esm.sh bundles this file into the browser entry, and
+// `fileURLToPath(import.meta.url)` at module scope throws there
+// ("The URL must be of scheme file") before any code runs.
+let _dirname = null;
+function pkgDir() {
+  if (_dirname === null) _dirname = path.dirname(fileURLToPath(import.meta.url));
+  return _dirname;
+}
 
 export const DEFAULT_REGISTRY = 'https://registry.npmjs.org';
 export const DEFAULT_GITHUB_URL =
@@ -108,7 +115,7 @@ export async function fetchBuffer(url, { retries = 3, timeoutMs = 120000, quiet 
 export function readManifest(modelDir) {
   const candidates = [
     path.join(modelDir, 'model.manifest.json'),
-    path.join(__dirname, '..', 'models', 'model.manifest.json')
+    path.join(pkgDir(), '..', 'models', 'model.manifest.json')
   ];
   for (const p of candidates) {
     try {
@@ -302,7 +309,7 @@ export function findChunksOnDisk(dir, manifest) {
 function chunkPackageRoots() {
   const roots = [];
   // node_modules of the package itself and of the parent project(s)
-  let dir = __dirname;
+  let dir = pkgDir();
   for (let i = 0; i < 6; i++) {
     roots.push(path.join(dir, '..', 'node_modules'));
     const parent = path.dirname(dir);
@@ -328,7 +335,7 @@ function chunkPackageRoots() {
  * @returns {Promise<{path: string, source: string}>}
  */
 export async function resolveModel(options = {}) {
-  const modelDir = options.modelDir || path.resolve(__dirname, '..', 'models');
+  const modelDir = options.modelDir || path.resolve(pkgDir(), '..', 'models');
   const cacheDir = options.cacheDir || defaultCacheDir();
   const quiet = options.quiet === true;
   const allowNetwork = options.allowNetwork !== false;

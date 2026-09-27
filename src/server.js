@@ -1,21 +1,45 @@
-import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Laya } from './agent.js';
-import { env } from './env.js';
+import { env, isBrowser } from './env.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Node builtins are imported lazily: this module is re-exported from the
+// package entry point, so a static `import http from 'node:http'` makes the
+// whole package unloadable in a browser - the import is resolved even when
+// nothing calls serve(). esm.sh turned them into /node/http.mjs shims, and
+// `fileURLToPath(import.meta.url)` at module scope then threw
+// "The URL must be of scheme file" before any code ran.
+let _node = null;
+async function nodeBuiltins() {
+  if (!_node) {
+    const [http, fs, path, url] = await Promise.all([
+      import('node:http'), import('node:fs'), import('node:path'), import('node:url')
+    ]);
+    _node = { http: http.default, fs: fs.default, path: path.default, url };
+  }
+  return _node;
+}
+
+/** The package's models/ directory: a path on Node, a URL in the browser. */
+async function defaultModelDir() {
+  if (isBrowser) return new URL('../models/', import.meta.url).href;
+  const { path, url } = await nodeBuiltins();
+  return path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '..', 'models');
+}
 
 // Report the version we actually are, not a literal that goes stale: /health
-// is what a deployment checks, and it said 1.0.0 while the package was 1.1.0.
-const PKG_VERSION = (() => {
+// is what a deployment checks. Read lazily, so nothing touches the filesystem
+// at module scope.
+let _pkgVersion = null;
+async function pkgVersion() {
+  if (_pkgVersion) return _pkgVersion;
   try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+    const { fs, path, url } = await nodeBuiltins();
+    const dir = path.dirname(url.fileURLToPath(import.meta.url));
+    _pkgVersion = JSON.parse(fs.readFileSync(path.join(dir, '..', 'package.json'), 'utf8')).version;
   } catch {
-    return 'unknown';
+    _pkgVersion = 'unknown';
   }
-})();
+  return _pkgVersion;
+}
 
 /**
  * Start HTTP server exposing the TypeSafe Jev /v1/systemone wire protocol.
@@ -28,6 +52,10 @@ const PKG_VERSION = (() => {
  * @returns {Promise<{ server: http.Server, url: string, laya: object, close: Function }>}
  */
 export async function serve(options = {}) {
+  if (isBrowser) {
+    throw new Error('serve() needs an HTTP server, which a browser does not have. Use Laya.load() in the browser.');
+  }
+  const { http } = await nodeBuiltins();
   const host = options.host || env('HOST') || '0.0.0.0';
   // `port: 0` means "pick a free port" — it must not be treated as unset.
   const portRaw = options.port ?? env('PORT');
@@ -54,7 +82,7 @@ export async function serve(options = {}) {
     } catch { /* best-effort */ }
   }
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     // Standard CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -75,7 +103,7 @@ export async function serve(options = {}) {
       res.end(JSON.stringify({
         status: 'ok',
         model: 'laya-multilingual',
-        version: PKG_VERSION,
+        version: await pkgVersion(),
         protocol: 'TypeSafe Jev /v1/systemone compatible'
       }));
       return;
