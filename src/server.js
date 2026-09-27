@@ -1,5 +1,20 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Laya } from './agent.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Report the version we actually are, not a literal that goes stale: /health
+// is what a deployment checks, and it said 1.0.0 while the package was 1.1.0.
+const PKG_VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+})();
 
 /**
  * Start HTTP server exposing the TypeSafe Jev /v1/systemone wire protocol.
@@ -59,7 +74,7 @@ export async function serve(options = {}) {
       res.end(JSON.stringify({
         status: 'ok',
         model: 'laya-multilingual',
-        version: '1.0.0',
+        version: PKG_VERSION,
         protocol: 'TypeSafe Jev /v1/systemone compatible'
       }));
       return;

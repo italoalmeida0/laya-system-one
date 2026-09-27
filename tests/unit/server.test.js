@@ -8,9 +8,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { serve } from '../../src/server.js';
 import { request } from '../helpers/index.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function stubLaya(result = { model: 'stub', answers: { q: { type: 'noul', noul: 0.5 } }, usage: { input_tokens: 1, output_tokens: 4 } }) {
   const calls = [];
@@ -170,5 +175,18 @@ test('concurrent requests are all answered', async () => {
     const results = await Promise.all(Array.from({ length: 20 }, () => post(url, VALID)));
     assert.ok(results.every((r) => r.status === 200));
     assert.equal(laya.calls.length, 20);
+  });
+});
+
+test('/health reports the package version, not a hardcoded one', async () => {
+  // It said 1.0.0 while the package was 1.1.0: a deployment checking /health
+  // would be told the wrong version. The value must come from package.json.
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  await withServer({ laya: stubLaya() }, async ({ url }) => {
+    const res = await request(url, '/health');
+    assert.equal(res.status, 200);
+    const body = res.json();
+    assert.equal(body.version, pkg.version,
+      `/health said ${body.version} but the package is ${pkg.version}`);
   });
 });
