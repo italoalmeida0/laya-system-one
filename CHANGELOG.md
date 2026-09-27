@@ -2,6 +2,36 @@
 
 All notable changes to `laya-system-one` are documented here.
 
+## [1.3.2] — 2026-09-27
+
+### Fixed: the wasm backend reported a different confidence
+
+`confidenceFromProbs` computed `(max(p) - 1/k) / (1 - 1/k)` while the native
+binary computes normalized entropy, `1 - H(p) / log(k)`. Two different
+quantities on different scales, so the same answer came back with a different
+confidence depending on the backend:
+
+| probabilities | wasm | native |
+| :--- | ---: | ---: |
+| `[0.9, 0.1]` | 0.800 | 0.531 |
+| `[0.7, 0.1, 0.1, 0.1]` | 0.600 | 0.322 |
+| `[0.4, 0.3, 0.3]` | 0.100 | 0.009 |
+
+The native formula is the correct one: KL divergence against a uniform
+distribution is identically the normalized entropy, and both match the upstream
+implementation's `confidence_from_probs`.
+
+This is **not** the calibrated confidence. Upstream distinguishes
+`answer_confidence` (`max(p)`, the quantity temperature scaling fits and every
+calibration figure is computed on) from this one, which "carries no such
+guarantee". This package reports the latter, as the native binary does.
+
+### Fixed: chunk dependencies are dropped past the checkpoint's count
+
+A package listing more chunks than exist makes npm and bun fetch packages that
+will never be published. The count now comes from the manifest rather than
+being maintained by hand.
+
 ## [1.3.1] — 2026-09-27
 
 ### Fixed: the browser import, which never actually worked
