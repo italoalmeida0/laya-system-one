@@ -94,9 +94,12 @@ test('the binaries and the model are optionalDependencies, not tarball payload',
   // The whole point of 1.1.0: the entry package stays small and the heavy
   // artifacts arrive as packages npm selects by os/cpu. If either of these
   // regresses, the entry package balloons back to ~200 MB.
+  // Binaries follow `binaryVersion` (the Rust), not the package version: a
+  // JS-only release reuses the binaries already on the registry.
   const opt = PKG.optionalDependencies || {};
+  const binaryVersion = PKG.binaryVersion || PKG.version;
   for (const p of ['linux-x64', 'linux-arm64', 'win32-x64', 'win32-arm64', 'darwin-arm64', 'darwin-x64', 'universal']) {
-    assert.equal(opt[`@sys-one/laya-serve-${p}`], PKG.version, `@sys-one/laya-serve-${p} must be an optionalDependency pinned to the package version`);
+    assert.equal(opt[`@sys-one/laya-serve-${p}`], binaryVersion, `@sys-one/laya-serve-${p} must be pinned to binaryVersion (${binaryVersion})`);
   }
 
   // The chunks follow the MODEL version, not the package version: their bytes

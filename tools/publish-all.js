@@ -226,10 +226,14 @@ function checkVersions() {
   const binaries = packageDirs(BIN_DIR);
   const chunks = packageDirs(CHUNK_DIR);
 
+  // Binaries follow `binaryVersion`, which only moves when the Rust does: a
+  // JS-only release reuses the binaries already on the registry instead of
+  // rebuilding and re-uploading 110 MB of identical executables.
+  const binaryVersion = main.binaryVersion || want;
   for (const dir of binaries) {
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
-    if (pkg.version !== want) {
-      problems.push(`binary package ${pkg.name} is ${pkg.version}, but package.json says ${want}`);
+    if (pkg.version !== binaryVersion) {
+      problems.push(`binary package ${pkg.name} is ${pkg.version}, but binaryVersion is ${binaryVersion}`);
     }
   }
 
@@ -270,7 +274,7 @@ function checkVersions() {
     process.exit(1);
   }
 
-  console.log(`[publish] ${binaries.length} binary package(s) at ${want}, ${chunks.length} chunk package(s) at model ${modelVersion} ✔`);
+  console.log(`[publish] ${binaries.length} binary package(s) at ${binaryVersion}, ${chunks.length} chunk package(s) at model ${modelVersion} ✔`);
 }
 
 /** The checkpoint's version, kept in the manifest, independent of the package. */

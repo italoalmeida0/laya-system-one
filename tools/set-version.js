@@ -12,9 +12,14 @@
  * that does not exist silently, so an entry package pointing at a version
  * nobody published installs cleanly and then finds no binary at runtime.
  *
- * Updates package.json, its version inside package-lock.json, and the version
- * recorded for each chunk in models/model.manifest.json, so every artifact of
- * the build agrees.
+ * Three versions, because three things change independently:
+ *   - the package version      (this package's own code)
+ *   - `binaryVersion`          (the Rust binary; only changes when native/ does)
+ *   - the model version        (the checkpoint; only changes when the model does)
+ *
+ * A code-only release therefore republishes just the entry package: the
+ * binaries and the 235 MB of model chunks keep the versions already on the
+ * registry and the publish step skips them.
  *
  *   node tools/set-version.js 1.1.0-alpha.0
  *   node tools/set-version.js --check 1.1.0-alpha.0   # verify, change nothing
@@ -78,9 +83,11 @@ edit('package.json', (j) => {
   const prev = j.version;
   j.version = version;
   const modelVersion = readModelVersion();
+  const binaryVersion = j.binaryVersion || version;
   for (const name of Object.keys(j.optionalDependencies || {})) {
     if (!name.startsWith('@sys-one/')) continue;
-    j.optionalDependencies[name] = name.includes('model-chunk') ? modelVersion : version;
+    if (name.includes('model-chunk')) j.optionalDependencies[name] = modelVersion;
+    else j.optionalDependencies[name] = binaryVersion;
   }
   return prev;
 });

@@ -44,11 +44,14 @@ export function checkPackageVersions(pkg, root) {
   const problems = [];
   const opt = pkg.optionalDependencies || {};
 
+  // Binaries follow `binaryVersion` (the Rust), not the package version: a
+  // JS-only release reuses the binaries already published.
+  const binaryVersion = pkg.binaryVersion || pkg.version;
   for (const name of REQUIRED_SERVE_PKGS) {
     if (!opt[name]) {
       problems.push(`optionalDependencies must list ${name} (the native binary ships as a package)`);
-    } else if (opt[name] !== pkg.version) {
-      problems.push(`${name} is pinned to ${opt[name]} but the package version is ${pkg.version}`);
+    } else if (opt[name] !== binaryVersion) {
+      problems.push(`${name} is pinned to ${opt[name]} but binaryVersion is ${binaryVersion}`);
     }
   }
 

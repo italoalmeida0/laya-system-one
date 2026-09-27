@@ -120,6 +120,7 @@ test('preflight: chunks are checked against the model version, not the package',
   try {
     const main = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
     main.version = '1.2.0';
+    main.binaryVersion = '1.2.0';
     main.optionalDependencies = {
       '@sys-one/laya-serve-darwin-arm64': '1.2.0',
       '@sys-one/laya-serve-darwin-x64': '1.2.0',
@@ -153,7 +154,7 @@ test('preflight: chunks are checked against the model version, not the package',
     // a binary at the wrong version is still an error
     const badBin = structuredClone(main);
     badBin.optionalDependencies['@sys-one/laya-serve-linux-x64'] = '1.1.0';
-    assert.match(checkPackageVersions(badBin, dir)[0], /package version is 1\.2\.0/);
+    assert.match(checkPackageVersions(badBin, dir)[0], /binaryVersion is 1\.2\.0/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
