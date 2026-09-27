@@ -2,6 +2,30 @@
 
 All notable changes to `laya-system-one` are documented here.
 
+## [1.3.1] — 2026-09-27
+
+### Fixed: the browser import, which never actually worked
+
+`import { Laya } from 'https://esm.sh/laya-system-one'` failed with
+"The URL must be of scheme file". Two causes, both invisible to a test that
+serves the files from disk:
+
+- **Module-scope Node calls.** esm.sh rewrites every `node:` import into a
+  browser shim and bundles `server.js`, `laya-native.js` and
+  `model-resolver.js` into the entry (because `index.js` re-exports `serve`).
+  Those files called `fileURLToPath(import.meta.url)` at module scope, and in
+  a browser `import.meta.url` is `https:` — so the shim threw before any code
+  ran and the whole package failed to load. The directory is now resolved
+  lazily, in all three.
+- **Synchronous wasm compilation.** `initSync` compiles the ~13 MB engine on
+  the calling thread, and Chrome refuses to compile more than 8 MB that way.
+  The browser now takes the async path (`WebAssembly.compile`), which Node
+  handles too.
+
+Verified end to end in headless Chromium against the published package:
+import from esm.sh, load the wasm engine, fetch the model over HTTP, answer a
+question. `npm run test:esmsh` runs it.
+
 ## [1.1.0] — 2026-09-26
 
 ### Added: configurable context length
