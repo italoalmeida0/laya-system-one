@@ -1,6 +1,6 @@
 {
   "name": "laya-system-one",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Self-contained System 1 decision engine: multilingual INT8 transformer served by a zero-dependency native binary (or the bundled pure-Rust WASM engine). TypeSafe Jev wire-compatible (/v1/systemone). Runs offline in Node.js, Bun and browsers.",
   "main": "./src/index.js",
   "module": "./src/index.js",
@@ -82,13 +82,13 @@
   "homepage": "https://github.com/italoalmeida0/laya-system-one#readme",
   "dependencies": {},
   "optionalDependencies": {
-    "@sys-one/laya-serve-darwin-arm64": "1.2.0",
-    "@sys-one/laya-serve-darwin-x64": "1.2.0",
-    "@sys-one/laya-serve-win32-x64": "1.2.0",
-    "@sys-one/laya-serve-win32-arm64": "1.2.0",
-    "@sys-one/laya-serve-linux-x64": "1.2.0",
-    "@sys-one/laya-serve-linux-arm64": "1.2.0",
-    "@sys-one/laya-serve-universal": "1.2.0",
+    "@sys-one/laya-serve-darwin-arm64": "1.3.3",
+    "@sys-one/laya-serve-darwin-x64": "1.3.3",
+    "@sys-one/laya-serve-win32-x64": "1.3.3",
+    "@sys-one/laya-serve-win32-arm64": "1.3.3",
+    "@sys-one/laya-serve-linux-x64": "1.3.3",
+    "@sys-one/laya-serve-linux-arm64": "1.3.3",
+    "@sys-one/laya-serve-universal": "1.3.3",
     "@sys-one/laya-model-chunk-00": "1.1.0",
     "@sys-one/laya-model-chunk-01": "1.1.0",
     "@sys-one/laya-model-chunk-02": "1.1.0",
@@ -103,5 +103,5 @@
     "@sys-one/laya-model-chunk-11": "1.1.0",
     "@sys-one/laya-model-chunk-12": "1.1.0"
   },
-  "binaryVersion": "1.2.0"
+  "binaryVersion": "1.3.3"
 }
