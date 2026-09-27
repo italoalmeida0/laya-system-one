@@ -90,9 +90,12 @@ async function getModule(options = {}) {
   // The wasm-pack `--target web` glue imports its sibling relatively, so it
   // resolves the same way from a file URL or a browser URL.
   const glue = await import(/* @vite-ignore */ urls.glue);
-  // `initSync` takes the raw bytes: no fetch inside the glue, which keeps the
-  // same code path on both runtimes.
-  glue.initSync({ module: _wasmBytes });
+  // `initSync` compiles the module on the calling thread, and Chrome refuses
+  // to compile more than 8 MB that way ("Compile is disallowed on the main
+  // thread"). This wasm is ~13 MB, so the browser must take the async path,
+  // which uses WebAssembly.compile. Node has no such limit, but the async call
+  // works there too, so one path serves both.
+  await glue.default({ module_or_path: _wasmBytes });
   _mod = glue;
   return glue;
 }
