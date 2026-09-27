@@ -189,89 +189,11 @@ jobs:
       - name: Install and run inside Alpine (node + bun)
         env:
           VERSION: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
         run: |
           docker run --rm --platform ${{ matrix.platform }} \
-            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
-              apk add --no-cache nodejs npm curl bash
-              mkdir -p /verify && cd /verify
-              npm init -y >/dev/null
-              npm install "laya-system-one@'"$VERSION"'" --no-audit --no-fund
-
-              echo "--- musl runtime ---"
-              ls /lib/ld-musl* || true
-              echo "--- installed ---"
-              ls node_modules/@sys-one/ | sort
-
-              SPECIFIC=$(ls node_modules/@sys-one/ | grep "^laya-serve-" | grep -v universal || true)
-              echo "specific package: $SPECIFIC"
-              [ "$SPECIFIC" = "laya-serve-linux-'"${{ matrix.arch }}"'" ] || {
-                echo "expected laya-serve-linux-'"${{ matrix.arch }}"', got $SPECIFIC"; exit 1; }
-
-              # the musl build ships as a self-extracting bundle
-              B="node_modules/@sys-one/laya-serve-linux-'"${{ matrix.arch }}'"/bin/linux-'"${{ matrix.arch }}"'-musl/laya-serve.bundle
-              [ -f "$B" ] || { echo "no musl bundle"; find node_modules/@sys-one -type f | head -20; exit 1; }
-              chmod +x "$B"
-              "$B" --help | head -2
-            '
-
-      - name: Run 10 questions on musl (Node)
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          docker run --rm --platform ${{ matrix.platform }} \
-            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
-              apk add --no-cache nodejs npm curl bash
-              mkdir -p /verify && cd /verify
-              npm init -y >/dev/null
-              npm install "laya-system-one@'"$VERSION"'" --no-audit --no-fund
-              cat > check.mjs <<JS
-              import { Laya } from "laya-system-one";
-              const q = { department: { type: "choice", instructions: "Which department?",
-                criteria: { billing: "refunds", tech: "bugs", sales: "upgrades" } } };
-              const laya = await Laya.load({ backend: "native" });
-              const prompts = [
-                "We were billed twice on the March invoice and want a refund.",
-                "The application crashes with a segfault when I open the settings page.",
-                "Quero fazer upgrade do meu plano para o empresarial.",
-                "I was charged the wrong amount on my last invoice.",
-                "The app freezes and throws an exception on startup."
-              ];
-              for (const p of prompts) {
-                const a = (await laya.predict(p, q)).answers.department.choice;
-                console.log(" ", a, JSON.stringify(p.slice(0,40)));
-              }
-              await laya.close();
-              console.log("MUSL NODE OK");
-              JS
-              node check.mjs
-            '
-
-      - name: Run the same on musl (Bun)
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          docker run --rm --platform ${{ matrix.platform }} \
-            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh -euxc '
-              apk add --no-cache nodejs npm curl bash unzip
-              curl -fsSL https://bun.sh/install | bash
-              export BUN_INSTALL="$HOME/.bun"; export PATH="$BUN_INSTALL/bin:$PATH"
-              bun --version
-              mkdir -p /verify && cd /verify
-              npm init -y >/dev/null
-              bun add "laya-system-one@'"$VERSION"'" || npm install "laya-system-one@'"$VERSION"'"
-              cat > check.mjs <<JS
-              import { Laya } from "laya-system-one";
-              const q = { department: { type: "choice", instructions: "Which department?",
-                criteria: { billing: "refunds", tech: "bugs", sales: "upgrades" } } };
-              const laya = await Laya.load({ backend: "native" });
-              const a = (await laya.predict("We were billed twice on the March invoice.", q)).answers.department.choice;
-              console.log("answer:", a);
-              await laya.close();
-              if (a !== "billing") process.exit(1);
-              console.log("MUSL BUN OK");
-              JS
-              bun check.mjs
-            '
+            -e VERSION -e ARCH \
+            -v "$GITHUB_WORKSPACE:/work" -w /work alpine:3.22 sh /work/.github/alpine-verify.sh
 
   # ------------------------------------------------------------------
   # report: one place to read the outcome
