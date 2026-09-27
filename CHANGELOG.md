@@ -69,11 +69,12 @@ actually exercises the system.** The wire protocol is unchanged.
 
 - **Model distribution over npm.** The 324 MB checkpoint no longer depends on
   git or a single download source. `tools/model-chunks.js` splits it into 13
-  npm chunk packages (`laya-system-one-model-chunk-00` … `-12`, ~24 MB each)
+  npm chunk packages (`@sys-one/laya-model-chunk-00` … `-12`, ~18 MB each)
   and `src/model-resolver.js` reassembles them locally.
 - **Deterministic model acquisition** (`src/model-resolver.js`):
-  `LAYA_MODEL_PATH` → local file → verified cache → local chunk packages →
-  npm registry tarballs → GitHub Releases. Every copy is sha256-verified
+  `LAYA_MODEL_PATH` → local file → verified cache → installed chunk packages →
+  npm registry tarballs → GitHub Releases (opt-in only, for 1.0.0 parity).
+  Every copy is sha256-verified
   against `models/model.manifest.json` and written atomically (temp file +
   rename), with retries and backoff on every network fetch.
 - **Test suite** (`node:test`, zero new dependencies):
@@ -82,7 +83,7 @@ actually exercises the system.** The wire protocol is unchanged.
   agreement, multilingual), `tests/e2e` (wire contract, CLI, lifecycle),
   `tests/packaging` (npm pack contents and size budget) and
   `tests/fresh-install` (pack → install into a clean dir → run).
-- **CI/CD**: `.github/workflows/ci.yml` (OS × Node matrix, model-backed
+- **CI/CD**: `.github/workflows/build-packages.yml` (OS × Node matrix, model-backed
   integration job, packaging job with size budget) and `release.yml`
   (builds native binaries and model chunks on tag).
 - `npm run lint`: syntax, packaging and documentation-consistency gate

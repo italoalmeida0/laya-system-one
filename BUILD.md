@@ -116,15 +116,38 @@ node tools/compare-all.js --trials 2 # full benchmark matrix (needs docker for l
 
 ## 7. CI
 
+Two workflows, with a deliberate split: CI builds and proves things, the
+developer's machine checks and publishes.
+
 | workflow | trigger | what it does |
 |---|---|---|
-| `ci.yml` | every push / PR | lint + hygiene, unit/packaging on a 3 OS × 3 Node matrix, real-model integration + e2e (model cached), model chunk pipeline round-trip, fresh-install smoke |
-| `build-binaries.yml` | manual / reusable | builds all 5 gnu targets on native runners (`windows-latest`, `windows-11-arm`, `ubuntu-latest`, `ubuntu-24.04-arm`, `macos-latest`) |
-| `release.yml` | tag `v*` | test gate → build binaries → build model chunks → GitHub Release with `model.onnx`, binaries and chunk tarballs |
-| `publish-npm.yml` | manual only | strict preflight (every `files` entry must exist) → publish chunk packages → publish `laya-system-one` |
+| `build-packages.yml` | push to `main`, tag `v*`, manual | builds the binary for each platform on a native runner (plus the musl bundles in Alpine), cuts the model into 13 chunk packages, proves every binary answers 10 questions, and uploads the finished packages as artifacts |
+| `verify-published.yml` | manual | installs a **published** version from the real registry on linux glibc/musl (x64 + arm64), Windows (x64 + arm64) and macOS (arm64 + x64), in Node and Bun, and runs a real inference; refuses to pass if the binary came from anywhere but `node_modules` |
 
-The musl bundles (§3) are still cross-built by hand (they need the Alpine
-`.so` set) — `publish-npm.yml` refuses to publish without them.
+Build a specific version on purpose:
+
+```bash
+gh workflow run build-packages.yml -f version=1.1.0-alpha.1
+```
+
+The version is stamped into `package.json`, the lockfile, the manifest and
+every `@sys-one/*` pin before anything is built, so nothing can disagree.
+
+Everything that is a developer concern rather than a build concern stays
+local, where it is faster and free:
+
+```bash
+npm run check          # lint, unit, packaging, integration, e2e,
+                       # build the packages, and a full install rehearsal
+npm run check:quick    # the same minus the model-backed suites (~2 min)
+npm run test:rehearsal # install from a LOCAL registry and use it, Node + Bun
+```
+
+The rehearsal is the one that matters before publishing: it serves the freshly
+built packages from an in-process npm registry, installs the entry package
+into a throwaway project, and asserts that npm selected exactly the expected
+platform package, that the 13 model chunks arrived, that the binary is
+executable, and that 10 questions come back with the right answers.
 
 ## 8. Model asset distribution (the 324 MB problem)
 

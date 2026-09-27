@@ -101,14 +101,20 @@ if (fs.existsSync(README)) {
     if (text.includes(phrase)) problems.push(`README.md: stale claim "${phrase}" — ${why}`);
   }
 
+  // The README is written for someone who wants to install and use this, so
+  // it must say how to install, how to call it and what it costs - not
+  // explain internals. (The WebGPU correction lives in the CHANGELOG, where
+  // it belongs: it is a fact about a past claim, not something a new user
+  // needs to know.)
   const required = [
     ['npm install', 'README must show how to install'],
     ['/v1/systemone', 'README must document the wire endpoint'],
     ['model', 'README must explain model acquisition'],
-    ['not used server-side', 'README must state the honest position on WebGPU']
+    ['Apache-2.0', 'README must state the license']
   ];
   for (const [needle, why] of required) {
-    if (!text.includes(needle)) problems.push(`README.md: missing "${needle}" — ${why}`);
+    // `text` is lowercased above, so compare in the same case
+    if (!text.includes(needle.toLowerCase())) problems.push(`README.md: missing "${needle}" — ${why}`);
   }
 } else {
   problems.push('README.md missing');

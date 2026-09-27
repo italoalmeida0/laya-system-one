@@ -1,8 +1,8 @@
 # Laya System-One
 
-**System 1 decision engine** — a multilingual INT8 transformer that answers typed questions (choice / score / yes-no) about any text, in milliseconds, offline.
-
-Wire-compatible with the **TypeSafe Jev** `/v1/systemone` protocol: send state + typed questions, get structured decisions back.
+**A decision engine in one package.** Give it any text and a set of typed
+questions, and it answers them — which category, how urgent, yes or no — in
+milliseconds, offline, in any language.
 
 ```bash
 npm install laya-system-one
@@ -11,7 +11,8 @@ npm install laya-system-one
 ```js
 import { Laya } from 'laya-system-one';
 
-const laya = await Laya.load();          // model is acquired on first use (once)
+const laya = await Laya.load();
+
 const out = await laya.predict(
   'We were billed twice on the March invoice and want a refund.',
   {
@@ -20,131 +21,82 @@ const out = await laya.predict(
       instructions: 'Which department should handle this?',
       criteria: { billing: 'refunds and invoices', tech: 'bugs', sales: 'upgrades' }
     },
-    churn:     { type: 'noul',  instructions: 'Is the user at churn risk?', threshold: 0.5 },
-    severity:  { type: 'score', instructions: 'Urgency?', criteria: ['low', 'mid', 'high'] }
+    churn:    { type: 'noul',  instructions: 'Is the user at churn risk?', threshold: 0.5 },
+    severity: { type: 'score', instructions: 'How urgent is this?', criteria: ['low', 'mid', 'high'] }
   }
 );
 
 console.log(out.answers.department.choice); // → "billing"
+console.log(out.answers.churn.noul);        // → 0.87
 ```
 
-Or run it as a service:
+That is the whole API. No accounts, no API keys, no internet at inference
+time. The first run downloads the model once (~324 MB) and caches it.
+
+## Run it as a service
 
 ```bash
 npx laya-system-one --port 8080
-curl -X POST http://localhost:8080/v1/systemone \
-  -H "Content-Type: application/json" \
-  -d '{"state":"I was charged twice and need a refund.","questions":{"dept":{"type":"choice","instructions":"Which department?","criteria":{"billing":"refunds","tech":"bugs"}}}}'
 ```
-
----
-
-## What it actually is
-
-A single ONNX checkpoint (`model.onnx`, ~324 MB, INT8) trained to score answer options for three question types, plus a small runtime that:
-
-1. renders the state and the question options into a prompt,
-2. runs one forward pass,
-3. turns the logits into calibrated probabilities.
-
-The runtime is JavaScript (Node/Bun/browser) and executes that forward pass in exactly two ways — pick one with `--backend` or `LAYA_BACKEND`:
-
-| backend | what it is | when to use |
-|---|---|---|
-| `native` **(default)** | the `laya-serve` binary bundled in the package (Rust: Axum + tokenizers + ONNX Runtime, statically linked) | fastest path, zero system dependencies, any OS |
-| `wasm` | pure-Rust `tract` compiled to WASM, bundled in the package | browsers and extreme portability |
-
-There are **no external runtime dependencies**: no `onnxruntime-*`, no `@huggingface/transformers`, nothing to download besides the model. The tokenizer itself is a pure-JS BPE implementation (`src/bpe-tokenizer.js`) verified token-for-token against the reference `tokenizers` crate that the native binary links — so both backends see exactly the same input ids.
-
-> **Note on WebGPU:** earlier versions advertised WebGPU acceleration. Measured reality: ONNX Runtime's Node WebGPU execution provider falls back to CPU per-op with large overhead — it is consistently *slower* than the native backend. WebGPU is not used server-side.
-
----
-
-## How the heavy pieces arrive
-
-The entry package is small on purpose (**~8.5 MB**): source, tokenizer and the
-wasm fallback. The binaries (150+ MB for every platform) and the model
-(324 MB) are published as separate `@sys-one` packages and installed as
-`optionalDependencies`, so npm fetches only what the machine needs:
-
-| package | selected by | size |
-| --- | --- | --- |
-| `@sys-one/laya-serve-<os>-<arch>` | npm's `os`/`cpu` fields | 8–26 MB |
-| `@sys-one/laya-serve-universal` | fallback for exotic platforms | ~76 MB |
-| `@sys-one/laya-model-chunk-00` … `-12` | always (all 13) | ~24 MB each |
-
-A `linux/x64` machine installs `laya-serve-linux-x64` and nothing else;
-a `linux/ppc64` machine matches none of the specific packages and gets the
-universal one. No package installs all of them.
-
-Two things worth knowing about how the selection works, because both were
-verified by experiment rather than assumed:
-
-- **`libc` cannot select.** The field exists but is unreliable (undocumented
-  shorthand, and real packages have shipped bugs where `--libc=glibc` pulls
-  the musl build too). So the glibc and musl builds of a Linux arch travel
-  **together** in one package, and the loader picks at runtime.
-- **Exclusions are AND-ed.** `os: ["!darwin", "!win32"]` means "not both",
-  not "either", so the complement of the specific packages cannot be spelled
-  out. The universal package lists the exotic cpus and OSes explicitly
-  instead: skipped wherever a specific package applies, selected everywhere
-  else.
-
-The model is assembled from its chunk packages on first use and verified
-against `models/model.manifest.json` (sha256 of the model *and* of every
-chunk), written atomically — a killed process cannot leave a corrupt model
-behind, the next run retries. The order is:
-
-1. `LAYA_MODEL_PATH` — explicit path to a `model.onnx` (file or directory);
-2. a `model.onnx` already present in the package's `models/` directory;
-3. `~/.cache/laya-system-one/model.onnx` — previously assembled copy;
-4. the installed `@sys-one/laya-model-chunk-*` packages (the normal path);
-5. the npm registry, if the chunks were not installed as dependencies;
-6. the GitHub Release asset — **opt-in only** (`LAYA_ALLOW_GITHUB_FALLBACK=1`),
-   kept for compatibility with 1.0.0 installs.
-
-### Offline / air-gapped installs
 
 ```bash
-LAYA_PREFETCH_MODEL=1 npm install laya-system-one   # fetch during install
-# or point at a model you already have:
-LAYA_MODEL_PATH=/opt/models/model.onnx
-# or drop chunk files somewhere and point at them:
-LAYA_MODEL_CHUNKS_DIR=/opt/models/chunks
+curl -X POST http://localhost:8080/v1/systemone \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": "I was charged twice and need a refund.",
+    "questions": {
+      "dept": { "type": "choice", "instructions": "Which department?",
+                "criteria": { "billing": "refunds", "tech": "bugs" } }
+    }
+  }'
 ```
 
----
+The `/v1/systemone` wire format is compatible with the TypeSafe Jev protocol:
+send a state plus typed questions, get structured decisions back.
+
+## Backends
+
+| backend | how it runs | when to pick it |
+|---|---|---|
+| `native` **(default)** | a self-contained Rust server bundled with the package | the normal choice — fastest, nothing to install |
+| `wasm` | pure Rust compiled to WebAssembly, also bundled | browsers, or platforms with no native build |
+
+Both are inside the package; nothing is compiled or fetched at install time.
+Switch with `--backend wasm` or `LAYA_BACKEND=wasm`.
 
 ## API
 
-### `Laya.load(options)` → `laya`
+### `Laya.load(options)` → `Promise<Laya>`
 
 | option | default | description |
 |---|---|---|
-| `backend` | `'native'` | `native` \| `wasm` (or env `LAYA_BACKEND`) |
-| `modelDir` | `<package>/models` | where `model.onnx` and `tokenizer.json` live |
-| `apiKey` | `null` | Bearer token required by the HTTP layer |
+| `backend` | `'native'` | `native` or `wasm` |
+| `modelDir` | the package's `models/` | where `model.onnx` and `tokenizer.json` live |
+| `apiKey` | `null` | require a Bearer token on the HTTP layer |
 | `port` / `host` | `0` / `127.0.0.1` | where the native server binds |
 
-### `laya.predict(state, questions, model?)` → `Promise<Answer>`
+### `laya.predict(state, questions)` → `Promise<Answer>`
 
-`state` is a string, object or array (serialized as JSON). `questions` is a map of question definitions:
+`state` is a string, object or array (serialized as JSON). `questions` is a map
+of question definitions:
 
 | type | `criteria` | answer |
 |---|---|---|
-| `choice` | object (label → meaning) or array | `{ type: 'choice', choice, probabilities, confidence }` |
-| `score` | array of ordered levels | `{ type: 'score', score, legend, probabilities, confidence }` |
-| `noul` | optional `{false, true}` text | `{ type: 'noul', noul, confidence, threshold?, decision? }` |
+| `choice` | object (label → meaning) or array | `{ type, choice, probabilities, confidence }` |
+| `score` | array of ordered levels | `{ type, score, legend, probabilities, confidence }` |
+| `noul` | optional `{ false, true }` text | `{ type, noul, confidence, threshold?, decision? }` |
 
-`noul` returns `noul` ∈ [0,1] (probability of *true*). With a `threshold`, a boolean `decision` is added. All fields round to 4 decimals.
+`noul` returns the probability of *true*; add a `threshold` to also get a
+boolean `decision`. All numbers round to 4 decimals.
 
-### HTTP server
+### `serve(options)` → `Promise<Server>`
 
 ```js
 import { serve } from 'laya-system-one';
+
 const srv = await serve({ port: 8080, apiKey: process.env.LAYA_API_KEY });
-console.log(srv.url);   // http://localhost:8080
-await srv.close();      // releases the engine and any child process
+console.log(srv.url);
+await srv.close();
 ```
 
 | endpoint | method | body | response |
@@ -152,12 +104,8 @@ await srv.close();      // releases the engine and any child process
 | `/v1/systemone` | `POST` | `{ state, questions, model? }` | `{ model, answers, usage }` |
 | `/health` | `GET` | – | `{ status, model, backend, protocol }` |
 
-Errors: `401` missing/invalid API key, `422` invalid payload, `404` unknown route, `413` body over 4 MB.
-
-> The `native` backend runs its own internal HTTP server for the engine;
-> `serve()` keeps it on a private loopback port and never exposes it.
-
----
+Errors: `401` bad API key, `422` invalid payload, `404` unknown route,
+`413` body over 4 MB.
 
 ## CLI
 
@@ -166,133 +114,103 @@ npx laya-system-one --port 8080 --backend native
 ```
 
 ```
---port <number>     HTTP port (default 8080, or PORT env)
---host <string>     bind address (default 0.0.0.0, or HOST env)
+--port <number>     HTTP port (default 8080, or PORT)
+--host <string>     bind address (default 0.0.0.0, or HOST)
 --backend <type>    native | wasm (default native)
 --api-key <string>  require Bearer token auth
 --help / --version
 ```
 
----
-
 ## Environment variables
 
 | variable | effect |
 |---|---|
-| `LAYA_BACKEND` | `native` \| `wasm` |
-| `LAYA_MODEL_PATH` | explicit `model.onnx` (file or directory) |
-| `LAYA_MODEL_CHUNKS_DIR` | directory with chunk files / chunk packages |
-| `LAYA_MODEL_URL` | override the download URL of the model asset |
-| `LAYA_CACHE_DIR` | where downloaded models are cached |
-| `LAYA_PREFETCH_MODEL` | `1` = fetch the model during `npm install` |
-| `LAYA_SKIP_MODEL_DOWNLOAD` | `1` = never download, never hint |
+| `LAYA_BACKEND` | `native` or `wasm` |
+| `LAYA_MODEL_PATH` | use a `model.onnx` you already have (file or directory) |
+| `LAYA_MODEL_CHUNKS_DIR` | directory holding the model chunks |
+| `LAYA_MODEL_URL` | override where the model is downloaded from |
+| `LAYA_CACHE_DIR` | where the model is cached |
+| `LAYA_PREFETCH_MODEL` | `1` = download the model during `npm install` |
+| `LAYA_SKIP_MODEL_DOWNLOAD` | `1` = never download, never prompt |
 | `LAYA_API_KEY` / `API_KEY` | require `Authorization: Bearer <key>` |
-| `LAYA_SERVE_BIN` | explicit path to the `laya-serve` binary |
+| `LAYA_SERVE_BIN` | use a specific `laya-serve` binary |
 
----
+Offline or air-gapped:
+
+```bash
+LAYA_PREFETCH_MODEL=1 npm install laya-system-one   # fetch during install
+LAYA_MODEL_PATH=/opt/models/model.onnx              # or bring your own copy
+LAYA_MODEL_CHUNKS_DIR=/opt/models/chunks            # or a directory of chunks
+```
 
 ## Performance
 
-`npm run bench` measures it on your own hardware and writes a JSON report.
+Measured on real hardware, on every platform we ship a binary for, with the
+default `native` backend. Run `npm run bench` to measure your own.
 
-Measured by CI on every platform we ship a binary for (the bundled
-`laya-serve` binary, 4 questions per call). Shared GitHub runners vary
-~20% between runs, so treat these as orders of magnitude, not promises -
-run `npm run bench` on your own hardware for exact numbers:
+| platform | load | first answer | warm (4 q/call) | per question |
+|---|---|---|---|---|
+| linux-arm64 | 1.6 s | 184 ms | 145 ms | 40 ms |
+| linux-arm64 (musl) | 1.9 s | 247 ms | 154 ms | 36 ms |
+| windows-x64 | 1.7 s | 175 ms | 149 ms | 40 ms |
+| windows-arm64 | 1.4 s | 231 ms | 178 ms | 47 ms |
+| macOS-arm64 | 1.3 s | 268 ms | 220 ms | 51 ms |
+| linux-x64 (musl) | 2.3 s | 387 ms | 253 ms | 59 ms |
+| linux-x64 | 2.5 s | 331 ms | 264 ms | 63 ms |
+| macOS-x64 | 2.9 s | 387 ms | 360 ms | 84 ms |
 
-| platform | init | cold question | warm avg (4 q) | warm p50 / p95 | 1 q per call | throughput |
-|---|---|---|---|---|---|---|
-| **linux-arm64** (musl) | 1.9 s | 247 ms | 154 ms | 143 / 205 | 36 ms | 28.1 q/s |
-| **linux-arm64** (glibc) | 1.6 s | 184 ms | 145 ms | 142 / 163 | 40 ms | 24.9 q/s |
-| **win-x64** | 1.7 s | 175 ms | 149 ms | 142 / 175 | 40 ms | 24.8 q/s |
-| **win-arm64** | 1.4 s | 231 ms | 178 ms | 174 / 204 | 47 ms | 21.2 q/s |
-| **mac-arm64** | 1.3 s | 268 ms | 220 ms | 218 / 250 | 51 ms | 19.5 q/s |
-| **linux-x64** (musl) | 2.3 s | 387 ms | 253 ms | 239 / 311 | 59 ms | 16.9 q/s |
-| **linux-x64** (glibc) | 2.5 s | 331 ms | 264 ms | 259 / 322 | 63 ms | 15.8 q/s |
-| **mac-x64** (Intel, ORT 1.23) | 2.9 s | 387 ms | 360 ms | 356 / 398 | 84 ms | 11.9 q/s |
+`load` is reading the model, `first answer` includes warmup, and the warm
+numbers are the sustained latency. Shared CI runners vary by ~20% between
+runs, so treat these as orders of magnitude.
 
-`init` is loading the model, `cold` is the very first question (warmup and
-arena allocation), and the warm numbers are the sustained latency.
-
-The `wasm` fallback is ~100x slower by design: `tract` specializes the whole
-model per input shape, so it runs a fixed padded shape (see
-`LayaEngine.padForWasm`) and pays for every position - about 6 s per question
-in the small bucket, 1.8 s to load. It exists for browsers and exotic
-platforms, not for throughput.
-
-**If you are on a platform we ship a binary for and you see the wasm backend
-being used, that is a bug** - the install is broken. The tests fail on
-purpose in that situation (`LAYA_ALLOW_WASM_FALLBACK=1` is the only way to
-accept the fallback).
-
-## Size
-
-| component | size |
-|---|---|
-| npm package | ~88 MB (native binaries for 6 platforms + WASM + tokenizer) |
-| model asset | ~324 MB (acquired once, cached, checksum-verified) |
-| disk after install + model | ~560 MB |
-| Docker (Debian slim + Bun + package) | ~450 MB image |
-
----
+The `wasm` backend is roughly 100x slower — it exists so browsers and unusual
+platforms work at all, not for throughput.
 
 ## Requirements
 
 | | |
 |---|---|
-| **Node.js** | ≥ 18.17 (zero runtime dependencies) |
-| **Bun** | ≥ 1.0 (fully supported) |
-| **Browsers** | WASM backend (no install required) |
-| **OS** | Linux (glibc + musl/Alpine), macOS (arm64), Windows (x64 + arm64) |
-| **Docker** | works on Debian slim, Ubuntu, Alpine |
+| **Node.js** | ≥ 18.17 |
+| **Bun** | ≥ 1.0 |
+| **Browsers** | the `wasm` backend |
+| **OS** | Linux (glibc and musl/Alpine), macOS (arm64 and x64), Windows (x64 and arm64) |
+| **Docker** | Debian, Ubuntu, Alpine |
 
-The `native` backend needs nothing installed: the binary is statically linked and ships in the package (for musl/Alpine it ships as a single self-extracting bundle with its own `lib/`).
+No runtime dependencies. The right native binary for your machine is installed
+automatically; there is nothing to compile and no system packages to add.
 
----
+## What gets installed
 
-## Storage
+The package is small and the heavy parts arrive as dependencies npm selects
+for your platform, so you download only what you can run:
 
-| what | where | size |
-|---|---|---|
-| package (code + binaries) | `node_modules/laya-system-one` | ~88 MB unpacked |
-| model asset | `models/model.onnx` or `~/.cache/laya-system-one/` | ~324 MB |
-| chunk packages | `dist/release/model-chunks/` (release artifacts) | ~324 MB |
+| | size |
+|---|---|
+| `laya-system-one` (code, tokenizer, wasm engine) | ~8.5 MB |
+| the one native binary for your platform | 8–26 MB |
+| the 13 model chunks | ~235 MB total |
+| the model on disk, after the first run | ~324 MB |
 
-The model is written to the package directory when it is writable, otherwise to the user cache — so global installs (`npm i -g`) and read-only containers work out of the box.
-
----
+The model is written next to the package when that directory is writable, and
+to your user cache otherwise — so `npm i -g` and read-only containers work
+without extra configuration. Every copy is checksum-verified, and a run that
+is killed mid-download leaves nothing corrupt behind.
 
 ## Development
 
 ```bash
 npm install
-npm test                 # unit + packaging (fast, offline)
-npm run test:integration # real model + tokenizer
-npm run test:e2e         # HTTP protocol + CLI + lifecycle
-npm run test:install     # pack + install into a clean dir + run
-npm run smoke            # one-shot human-readable verification
-npm run lint             # syntax + packaging + docs consistency gate
-npm run tokenizer:diff   # prove the JS tokenizer == the native binary's
+npm run check            # lint, unit, packaging, integration, e2e + install rehearsal
+npm run check:quick      # the same minus the model-backed suites
+npm run test:rehearsal   # install from a local registry and use it, Node + Bun
+npm run bench            # measure on this machine
+npm run lint             # syntax + packaging + docs consistency
 ```
 
-The model-distribution pipeline (the reason the 324 MB asset can live on npm):
-
-```bash
-npm run model:chunks      # split models/model.onnx into chunk packages
-npm run model:assemble    # reassemble from the chunks (byte-identical)
-npm run model:verify      # checksum the model against the manifest
-npm run model:publish     # publish the chunk packages to npm
-```
-
-CI runs the whole matrix (OS × Node) plus model-backed integration tests on every push — see `.github/workflows/ci.yml`.
-
-## Migrating from 1.0.0
-
-1.0.0 on npm was a different codebase (ONNX Runtime only, model embedded, single language). The `/v1/systemone` wire protocol is unchanged, so HTTP clients keep working. Node API changes:
-
-- `predict(state, questions)` takes a *map* of questions (1.0.0 took a single question and returned a bare value);
-- `server.js`/`client.js` were replaced by `serve()` + `Laya.load()`;
-- the model is no longer embedded in the package — it is acquired on first use (see above).
+CI builds every platform, proves each binary answers 10 questions, and uploads
+the packages as artifacts. `verify-published.yml` installs a published version
+from the real registry on every platform — Node and Bun, including Alpine for
+musl — and runs a real inference.
 
 ## License
 
