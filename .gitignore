@@ -22,3 +22,6 @@ C:/temp/
 
 # vendored rust patches (gerado local, nao vai pro git)
 native/*/vendor/
+
+# upstream reference clone (temporary, for model export work)
+.upstream/

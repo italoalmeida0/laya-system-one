@@ -1,0 +1,121 @@
+name: update model
+
+# Rebuilds `model.onnx` from the upstream Laya checkpoint.
+#
+# The model is not hand-made: it is the upstream `laya-multilingual` checkpoint
+# exported to ONNX and quantized to INT8. When upstream improves - a longer
+# context, a retrained head, a new checkpoint - this workflow produces the new
+# file, proves it answers the same questions the same way, and uploads it as an
+# artifact. Publishing it is still a deliberate local step, like everything
+# else here.
+#
+#   gh workflow run update-model.yml -f model=convaiinnovations/laya-multilingual
+#   gh workflow run update-model.yml -f model=convaiinnovations/laya-multilingual -f max-len=8192
+#
+# The export needs PyTorch and the upstream package, so it runs on a runner
+# with room for a few GB rather than on your machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Hugging Face model id or path to export'
+        required: true
+        default: 'convaiinnovations/laya-multilingual'
+      max-len:
+        description: 'Context length to build the graph for (1024, 8192, ...)'
+        required: false
+        default: '1024'
+      skip-quantize:
+        description: 'Keep fp32 (much larger, marginally more accurate)'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: update-model-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: export & verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+
+      - name: Install the export toolchain
+        # Not the package's dependencies - the package has none. This is the
+        # one-off toolchain that turns a checkpoint into an ONNX file.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers onnx onnxruntime huggingface_hub laya
+
+      - name: Export the checkpoint to ONNX/INT8
+        run: |
+          set -euo pipefail
+          QUANT=""
+          if [ "${{ inputs.skip-quantize }}" = "true" ]; then QUANT="--skip-quantize"; fi
+          python tools/export-model.py \
+            --model "${{ inputs.model }}" \
+            --out-dir models-new \
+            --max-len "${{ inputs.max-len }}" \
+            $QUANT
+          ls -la models-new
+
+      - name: Install the package's own tooling
+        run: npm install --no-audit --no-fund --ignore-scripts
+
+      - name: The new model must answer the shipped prompts the same way
+        # This is the gate that matters: a file that loads but answers
+        # differently is a regression, and it is cheaper to catch here than
+        # after publishing.
+        run: |
+          set -euo pipefail
+          # the native binary for this runner, so the comparison runs on the
+          # same code path the package uses
+          cargo build --release --manifest-path native/laya-serve/Cargo.toml
+          mkdir -p dist/bin/linux-x64
+          cp native/laya-serve/target/release/laya-serve dist/bin/linux-x64/laya-serve
+          node tools/model-diff.js --model models-new/model.onnx --against models/model.onnx
+
+      - name: Report what changed
+        run: |
+          set -euo pipefail
+          OLD=$(node -p 'require("./models/model.manifest.json").sha256')
+          NEW=$(python -c "import json;print(json.load(open('models-new/model.manifest.json'))['sha256'])")
+          echo "old sha256: $OLD"
+          echo "new sha256: $NEW"
+          echo "old bytes : $(stat -c%s models/model.onnx)"
+          echo "new bytes : $(stat -c%s models-new/model.onnx)"
+          {
+            echo "## Model export"
+            echo ""
+            echo "| | old | new |"
+            echo "|---|---|---|"
+            echo "| sha256 | \`${OLD:0:16}…\` | \`${NEW:0:16}…\` |"
+            echo "| bytes | $(stat -c%s models/model.onnx) | $(stat -c%s models-new/model.onnx) |"
+            echo "| source | shipped | ${{ inputs.model }} |"
+            echo "| max_len | $(node -p 'require("./models/rl_agent_config.json").max_len') | ${{ inputs.max-len }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the new model
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-onnx
+          path: |
+            models-new/model.onnx
+            models-new/model.manifest.json
+            models-new/tokenizer.json
+            models-new/tokenizer_config.json
+          retention-days: 14
+          if-no-files-found: error

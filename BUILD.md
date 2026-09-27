@@ -172,3 +172,44 @@ Chunk size is 24 MB (13 packages for this model): small enough for any
 registry mirror/proxy, large enough to keep the request count low.
 Bump `--model-version` whenever the checkpoint changes — the chunk
 packages are immutable by content.
+
+### Rebuilding the model from upstream
+
+`model.onnx` is not hand-made. It is the upstream
+[`convaiinnovations/laya-multilingual`](https://huggingface.co/convaiinnovations/laya-multilingual)
+checkpoint (mmBERT-base, 322M parameters) exported to ONNX and quantized to
+INT8. When upstream improves — a longer context, a retrained head, a new
+checkpoint — `tools/export-model.py` produces the new file:
+
+```bash
+gh workflow run update-model.yml \
+  -f model=convaiinnovations/laya-multilingual \
+  -f max-len=8192
+```
+
+Or locally, in an environment with PyTorch (this is not the package's
+dependency set — the package has none):
+
+```bash
+pip install torch transformers onnx onnxruntime huggingface_hub laya
+npm run model:export -- --model convaiinnovations/laya-multilingual --max-len 8192
+```
+
+The export writes `model.onnx`, the tokenizer files and a manifest with the
+checksums. Two things then decide whether it ships:
+
+```bash
+npm run model:diff -- --model models/model.onnx   # vs the shipped model
+npm run quick:check                                # 10 questions, native
+```
+
+`model:diff` runs both files through the real engine and reports where they
+disagree — a changed answer on a decisive prompt is a regression, and it exits
+non-zero so it can gate a release. `update-model.yml` runs exactly this
+comparison on the runner before uploading anything.
+
+The context length is the one value that needs a decision. `max_len` comes
+from `models/rl_agent_config.json` and the runtime reads it at startup, so
+raising it (the upstream now recommends 8192) is a config change plus a
+re-export, not a code change. The graph is built with dynamic sequence
+lengths, so a longer limit does not slow short inputs down.

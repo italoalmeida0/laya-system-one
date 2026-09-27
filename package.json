@@ -51,7 +51,9 @@
     "check": "node ./tools/local-check.js",
     "check:quick": "node ./tools/local-check.js --quick",
     "quick:check": "node ./tools/quick-check.js",
-    "preflight": "node ./tools/preflight-publish.js"
+    "preflight": "node ./tools/preflight-publish.js",
+    "model:export": "python ./tools/export-model.py",
+    "model:diff": "node ./tools/model-diff.js"
   },
   "repository": {
     "type": "git",
