@@ -57,10 +57,15 @@ function edit(file, mutate) {
   touched.push(file);
 }
 
-// package.json: the version the published entry package will carry
+// package.json: the version the published entry package will carry, and the
+// @sys-one packages it depends on - npm skips a missing optionalDependency
+// silently, so a stale pin here ships an install that finds no binary.
 edit('package.json', (j) => {
   const prev = j.version;
   j.version = version;
+  for (const name of Object.keys(j.optionalDependencies || {})) {
+    if (name.startsWith('@sys-one/')) j.optionalDependencies[name] = version;
+  }
   return prev;
 });
 
