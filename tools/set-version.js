@@ -39,6 +39,16 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
   process.exit(1);
 }
 
+/** The checkpoint's version, from the manifest; independent of the package. */
+function readModelVersion() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8'));
+    return manifest.modelVersion || manifest.version || '1.0.0';
+  } catch {
+    return '1.0.0';
+  }
+}
+
 const touched = [];
 const mismatches = [];
 
@@ -60,11 +70,17 @@ function edit(file, mutate) {
 // package.json: the version the published entry package will carry, and the
 // @sys-one packages it depends on - npm skips a missing optionalDependency
 // silently, so a stale pin here ships an install that finds no binary.
+//
+// The two kinds are pinned differently: binaries are compiled from this
+// commit and follow the package version, while the model chunks follow the
+// checkpoint's version (they are not rebuilt when only the code changes).
 edit('package.json', (j) => {
   const prev = j.version;
   j.version = version;
+  const modelVersion = readModelVersion();
   for (const name of Object.keys(j.optionalDependencies || {})) {
-    if (name.startsWith('@sys-one/')) j.optionalDependencies[name] = version;
+    if (!name.startsWith('@sys-one/')) continue;
+    j.optionalDependencies[name] = name.includes('model-chunk') ? modelVersion : version;
   }
   return prev;
 });
@@ -77,13 +93,12 @@ edit('package-lock.json', (j) => {
   return prev;
 });
 
-// models/model.manifest.json: each chunk carries the version it was cut for,
-// and the chunk packages must be publishable under the same number
-edit('models/model.manifest.json', (j) => {
-  const prev = (j.chunks || [])[0]?.version;
-  for (const chunk of j.chunks || []) chunk.version = version;
-  return prev;
-});
+// models/model.manifest.json is deliberately NOT touched: the chunk packages
+// are versioned by the model, not by the package. Rewriting them here would
+// republish 235 MB of identical data on every release and force every user to
+// re-download it. Bump the model version explicitly with
+// `node tools/model-chunks.js build --model-version <n>` when the checkpoint
+// itself changes.
 
 if (checkOnly) {
   if (mismatches.length) {

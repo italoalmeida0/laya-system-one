@@ -32,7 +32,7 @@
     "test:all": "npm run lint && npm run test:unit && npm run test:packaging && npm run test:integration && npm run test:e2e",
     "lint": "node ./tools/lint.js",
     "bundle": "node ./tools/make-bundle.js",
-    "model:chunks": "node ./tools/model-chunks.js build --chunk-mb 24 --model-version $npm_package_version",
+    "model:chunks": "node ./tools/model-chunks.js build --chunk-mb 24",
     "model:assemble": "node ./tools/model-chunks.js assemble",
     "model:verify": "node ./tools/model-chunks.js verify",
     "model:publish": "node ./tools/model-chunks.js publish",

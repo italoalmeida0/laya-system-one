@@ -214,17 +214,30 @@ function cmdDownload(args) {
  * and then fail to find a binary. Refusing is the only safe answer.
  */
 function checkVersions() {
-  const want = readMain().version;
+  const main = readMain();
+  const want = main.version;
   const problems = [];
 
-  const seen = new Set();
-  for (const [kind, dirs] of [['binary', packageDirs(BIN_DIR)], ['chunk', packageDirs(CHUNK_DIR)]]) {
-    for (const dir of dirs) {
-      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
-      seen.add(pkg.name);
-      if (pkg.version !== want) {
-        problems.push(`${kind} package ${pkg.name} is ${pkg.version}, but package.json says ${want}`);
-      }
+  // Two different version rules, because the two kinds of package depend on
+  // different things:
+  //   binaries - compiled from this commit, so they carry the package version
+  //   chunks   - cut from the checkpoint, so they carry the MODEL version and
+  //              are skipped when the model has not changed
+  const binaries = packageDirs(BIN_DIR);
+  const chunks = packageDirs(CHUNK_DIR);
+
+  for (const dir of binaries) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    if (pkg.version !== want) {
+      problems.push(`binary package ${pkg.name} is ${pkg.version}, but package.json says ${want}`);
+    }
+  }
+
+  const modelVersion = readModelVersion();
+  for (const dir of chunks) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    if (pkg.version !== modelVersion) {
+      problems.push(`chunk package ${pkg.name} is ${pkg.version}, but the model version is ${modelVersion}`);
     }
   }
 
@@ -232,30 +245,39 @@ function checkVersions() {
     console.error('\n[publish] version mismatch - refusing to publish:');
     for (const p of problems.slice(0, 6)) console.error(`  - ${p}`);
     if (problems.length > 6) console.error(`  ... and ${problems.length - 6} more`);
-    console.error(`\n[publish] the artifacts were built for one version and package.json says another.`);
-    console.error(`[publish] either publish under the built version:`);
-    console.error(`[publish]   npm version <the-built-version> --no-git-tag-version`);
-    console.error(`[publish] or rebuild for this one:`);
+    console.error('\n[publish] the artifacts were built for one version and package.json says another.');
+    console.error('[publish] either publish under the built version:');
+    console.error('[publish]   npm version <the-built-version> --no-git-tag-version');
+    console.error('[publish] or rebuild for this one:');
     console.error(`[publish]   gh workflow run build-packages.yml -f version=${want}`);
     process.exit(1);
   }
 
-  // the entry package must depend on exactly what we are about to publish
-  const main = readMain();
+  // The entry package must depend on exactly what we are about to publish,
+  // each at the version that package actually carries.
   const opt = main.optionalDependencies || {};
   const declared = new Set(Object.keys(opt));
-  for (const name of seen) {
-    if (!declared.has(name)) problems.push(`package.json does not list ${name} as an optionalDependency`);
-  }
-  for (const [name, ver] of Object.entries(opt)) {
-    if (ver !== want) problems.push(`package.json pins ${name} at ${ver}, expected ${want}`);
+  for (const dir of [...binaries, ...chunks]) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    if (!declared.has(pkg.name)) problems.push(`package.json does not list ${pkg.name} as an optionalDependency`);
+    else if (opt[pkg.name] !== pkg.version) {
+      problems.push(`package.json pins ${pkg.name} at ${opt[pkg.name]}, but the package is ${pkg.version}`);
+    }
   }
   if (problems.length) {
     console.error('\n[publish] package.json does not match the staged packages:');
     for (const p of problems.slice(0, 6)) console.error(`  - ${p}`);
     process.exit(1);
   }
-  console.log(`[publish] version ${want} consistent across ${seen.size} package(s) ✔`);
+
+  console.log(`[publish] ${binaries.length} binary package(s) at ${want}, ${chunks.length} chunk package(s) at model ${modelVersion} ✔`);
+}
+
+/** The checkpoint's version, kept in the manifest, independent of the package. */
+function readModelVersion() {
+  const manifestPath = path.join(ROOT, 'models', 'model.manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  return manifest.modelVersion || manifest.version || '1.0.0';
 }
 
 function cmdInspect() {

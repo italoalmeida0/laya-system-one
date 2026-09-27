@@ -254,8 +254,9 @@ jobs:
 
       - name: Split into chunk packages + reassemble to prove it round-trips
         run: |
-          V=$(node -p 'require("./package.json").version')
-          node tools/model-chunks.js build --chunk-mb 24 --model-version "$V"
+          # No --model-version: the chunks follow the MODEL version recorded
+          # in the manifest, so an unchanged checkpoint is not republished.
+          node tools/model-chunks.js build --chunk-mb 24
           node tools/model-chunks.js assemble --out "$RUNNER_TEMP/model.from-chunks.onnx"
           node tools/model-chunks.js verify --model "$RUNNER_TEMP/model.from-chunks.onnx"
           # Round-tripping is not enough: the reassembled file must still
