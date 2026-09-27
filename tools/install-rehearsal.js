@@ -293,11 +293,15 @@ async function checkProject(label, dir, platform, runtime, registryUrl) {
     record(`${runtime} ran 10 questions`, false, (r.stderr || r.stdout || '').split('\n').slice(-3).join(' ').slice(0, 200));
     return results;
   }
-  const answersLine = (r.stdout || '').split('\n').find((l) => l.startsWith('ANSWERS:'));
-  const msLine = (r.stdout || '').split('\n').find((l) => l.startsWith('MS:'));
+  const line = (prefix) => (r.stdout || '').split('\n').find((l) => l.startsWith(prefix)) || '';
+  const answersLine = line('ANSWERS:');
   const answers = answersLine ? JSON.parse(answersLine.slice(8)) : [];
+  // load and inference are reported separately: a single total makes startup
+  // look like slow inference
+  const loadMs = line('LOAD_MS:').slice(8);
+  const perQ = line('PER_QUESTION_MS:').slice(16);
   record(`${runtime} ran 10 questions`, answers.length === 10,
-    answers.length ? `load ${loadMs}ms, ${perQ}ms/question` : 'no answers');
+    answers.length ? `load ${loadMs}ms, ${perQ}ms/question` : `no answers (${r.stdout.slice(-160)})`);
   record('answers are sane', answers[0] === 'billing' && answers[1] === 'tech',
     `first two: ${answers[0]}, ${answers[1]}`);
   return results;
