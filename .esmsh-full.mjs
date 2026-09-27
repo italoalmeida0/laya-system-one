@@ -31,7 +31,7 @@ await page.goto(base + 'tests/browser/page.html');
 const result = await page.evaluate(async ({ base }) => {
   const out = { steps: [] };
   try {
-    const { Laya } = await import('https://esm.sh/gh/italoalmeida0/laya-system-one@main/src/index.js');
+    const { Laya } = await import('https://esm.sh/gh/italoalmeida0/laya-system-one@1e9ad49/src/index.js');
     out.steps.push('imported');
     const laya = await Laya.load({
       backend: 'wasm',
