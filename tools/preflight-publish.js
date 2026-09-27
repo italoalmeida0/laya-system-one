@@ -91,13 +91,18 @@ for (const name of REQUIRED_SERVE_PKGS) {
   }
 }
 
-const chunkCount = Number(
-  JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8')).chunkCount || 0
-);
+// The chunks are versioned by the MODEL, not by the package: their bytes
+// depend only on the checkpoint, so pinning them to the package version would
+// republish 235 MB of identical data on every code-only release.
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8'));
+const modelVersion = manifest.modelVersion || manifest.version || '1.0.0';
+const chunkCount = Number(manifest.chunkCount || 0);
 for (let i = 0; i < chunkCount; i++) {
   const name = `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`;
   if (!opt[name]) problems.push(`optionalDependencies must list ${name} (the model ships as chunk packages)`);
-  else if (opt[name] !== pkg.version) problems.push(`${name} is pinned to ${opt[name]}, expected ${pkg.version}`);
+  else if (opt[name] !== modelVersion) {
+    problems.push(`${name} is pinned to ${opt[name]}, expected the model version ${modelVersion}`);
+  }
 }
 
 // A built release must also have the packaged binaries on disk, so that
