@@ -22,6 +22,38 @@ export async function resolveModelPath(modelDir, options = {}) {
   return resolved.path;
 }
 
+/**
+ * Sequence-length buckets for the wasm backend.
+ *
+ * Powers of two up to a threshold, then coarser steps: a prompt lands in the
+ * smallest bucket that fits, so the common short case runs short. The list is
+ * bounded (10 shapes) because every distinct shape costs a full copy of the
+ * weights in the wasm32 address space.
+ *
+ * LAYA_WASM_PAD overrides this with a single fixed size, for callers who
+ * prefer one shape and predictable memory over speed.
+ */
+const SEQ_BUCKETS = [64, 128, 256, 512, 1024, 2048, 4096, 8192];
+
+/** The smallest bucket that fits `len`, or the max_len ceiling. */
+export function bucketFor(len, maxLen) {
+  const forced = envInt('LAYA_WASM_PAD');
+  if (forced && forced > 0) return len <= forced ? forced : maxLen;
+  for (const b of SEQ_BUCKETS) {
+    if (len <= b) return Math.min(b, maxLen);
+  }
+  return maxLen;
+}
+
+/** Marker-count buckets: a handful of questions per call, so 4/8/16/32. */
+const MARKER_BUCKETS = [4, 8, 16, 32];
+export function markerBucket(count) {
+  for (const b of MARKER_BUCKETS) {
+    if (count <= b) return b;
+  }
+  return 32;
+}
+
 // JS-side inference runs on the bundled pure-Rust wasm (tract) engine.
 // The fast path is the bundled native binary (LayaNative) which does its
 // own inference in Rust. No onnxruntime / external runtime is used.
@@ -89,21 +121,27 @@ export class LayaEngine {
    * answer identical to the unpadded one.
    */
   padForWasm(item) {
-    // Shape budget: tract specializes the model per concrete (S, M) and each
-    // plan holds its own copy of the weights, so only a couple of shapes may
-    // ever exist. Short sequences use the small bucket, long ones the full
-    // max_len bucket (slow but rare). Both mask the padding out, so the
+    // tract specializes the model per concrete (S, M) and each plan holds its
+    // own copy of the weights (~309 MB), so the number of distinct shapes has
+    // to stay small: the wasm32 address space is 4 GB and the Rust side clears
+    // its plan cache past 16 entries.
+    //
+    // A single large pad is safe but wasteful - a 43-token prompt padded to
+    // 256 does 6x the work it needs to. Fixed buckets give most of that back
+    // while keeping the shape count bounded: a prompt lands in the smallest
+    // bucket that fits, so short inputs run short and long ones still work.
+    // Padding is masked out (attention_mask 0, marker_mask false), so the
     // answer is identical to the unpadded one.
-    // read per call so LAYA_WASM_PAD can be tuned without a restart
-    const padLen = envInt('LAYA_WASM_PAD') || 256;
-    const S = item.ids.length <= padLen ? padLen : (this.config.max_len || 1024);
-    const M = 32;
+    const S = bucketFor(item.ids.length, this.config.max_len || 2048);
+    const M = markerBucket(item.markers.length);
+
     if (item.ids.length > S) {
       throw new Error(`wasm backend: sequence of ${item.ids.length} tokens exceeds the fixed shape ${S}`);
     }
     if (item.markers.length > M) {
       throw new Error(`wasm backend: ${item.markers.length} markers exceed the fixed shape ${M}`);
     }
+
     const ids = item.ids.slice();
     const attn = new Array(S).fill(0);
     for (let i = 0; i < item.ids.length; i++) attn[i] = 1;

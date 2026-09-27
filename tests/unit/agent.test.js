@@ -319,3 +319,36 @@ test('buildServerArgs: the token budget reaches the binary', async () => {
     assert.equal(args.includes('--max-len'), false, `maxLen=${String(bad)} must not emit the flag`);
   }
 });
+
+test('wasm buckets: a short prompt runs short, and the shape count stays bounded', async () => {
+  // A single large pad made a 43-token prompt do 6x the work it needed (256
+  // vs 43). Buckets give that back, but every distinct shape costs a full
+  // copy of the weights in the wasm32 address space, so the list must stay
+  // small - that is the constraint, not an implementation detail.
+  const { bucketFor, markerBucket } = await import('../../src/engine.js');
+
+  assert.equal(bucketFor(43, 2048), 64, 'a 43-token prompt must not be padded to 256');
+  assert.equal(bucketFor(64, 2048), 64, 'exactly at a bucket stays in it');
+  assert.equal(bucketFor(65, 2048), 128);
+  assert.equal(bucketFor(200, 2048), 256);
+  assert.equal(bucketFor(9000, 2048), 2048, 'never exceeds max_len');
+
+  // the number of distinct sequence shapes must stay small
+  const shapes = new Set();
+  for (let len = 1; len <= 8192; len++) shapes.add(bucketFor(len, 8192));
+  assert.ok(shapes.size <= 10, `at most 10 sequence shapes, got ${shapes.size}`);
+
+  assert.equal(markerBucket(3), 4);
+  assert.equal(markerBucket(5), 8);
+  assert.equal(markerBucket(100), 32);
+
+  // LAYA_WASM_PAD still forces one shape for callers who want that
+  const prev = process.env.LAYA_WASM_PAD;
+  try {
+    process.env.LAYA_WASM_PAD = '256';
+    assert.equal(bucketFor(43, 2048), 256, 'the override must win');
+  } finally {
+    if (prev === undefined) delete process.env.LAYA_WASM_PAD;
+    else process.env.LAYA_WASM_PAD = prev;
+  }
+});
