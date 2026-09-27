@@ -25,3 +25,6 @@ native/*/vendor/
 
 # upstream reference clone (temporary, for model export work)
 .upstream/
+
+# the julia-system-one fork is its own repository
+julia-system-one/
