@@ -99,10 +99,15 @@ test('the binaries and the model are optionalDependencies, not tarball payload',
     assert.equal(opt[`@sys-one/laya-serve-${p}`], PKG.version, `@sys-one/laya-serve-${p} must be an optionalDependency pinned to the package version`);
   }
 
+  // The chunks follow the MODEL version, not the package version: their bytes
+  // depend only on the checkpoint, so a code-only release must not republish
+  // 235 MB of identical data.
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8'));
+  const modelVersion = manifest.modelVersion || manifest.version;
+  assert.ok(modelVersion, 'the manifest must record the model version');
   for (let i = 0; i < manifest.chunkCount; i++) {
     const name = `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`;
-    assert.equal(opt[name], PKG.version, `${name} must be an optionalDependency pinned to the package version`);
+    assert.equal(opt[name], modelVersion, `${name} must be pinned to the model version (${modelVersion}), not the package version`);
   }
 
   // and none of that may sneak back into the tarball

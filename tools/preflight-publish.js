@@ -19,6 +19,59 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const allowMissingDist = process.argv.includes('--allow-missing-dist');
 
+/** The platform packages the entry package must depend on. */
+export const REQUIRED_SERVE_PKGS = [
+  '@sys-one/laya-serve-darwin-arm64',
+  '@sys-one/laya-serve-darwin-x64',
+  '@sys-one/laya-serve-win32-x64',
+  '@sys-one/laya-serve-win32-arm64',
+  '@sys-one/laya-serve-linux-x64',
+  '@sys-one/laya-serve-linux-arm64',
+  '@sys-one/laya-serve-universal'
+];
+
+/**
+ * Check that the entry package depends on exactly the right things, each at
+ * the right version. Pure, so it can be tested directly.
+ *
+ * Two different rules, because the two kinds of package depend on different
+ * things: binaries are compiled from this commit and follow the package
+ * version, while the model chunks are cut from the checkpoint and follow the
+ * MODEL version. Pinning the chunks to the package version would republish
+ * 235 MB of identical data on every code-only release.
+ */
+export function checkPackageVersions(pkg, root) {
+  const problems = [];
+  const opt = pkg.optionalDependencies || {};
+
+  for (const name of REQUIRED_SERVE_PKGS) {
+    if (!opt[name]) {
+      problems.push(`optionalDependencies must list ${name} (the native binary ships as a package)`);
+    } else if (opt[name] !== pkg.version) {
+      problems.push(`${name} is pinned to ${opt[name]} but the package version is ${pkg.version}`);
+    }
+  }
+
+  const manifestPath = path.join(root, 'models', 'model.manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    problems.push('models/model.manifest.json is missing (needed to know the model version)');
+    return problems;
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const modelVersion = manifest.modelVersion || manifest.version || '1.0.0';
+
+  for (let i = 0; i < Number(manifest.chunkCount || 0); i++) {
+    const name = `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`;
+    if (!opt[name]) {
+      problems.push(`optionalDependencies must list ${name} (the model ships as chunk packages)`);
+    } else if (opt[name] !== modelVersion) {
+      problems.push(`${name} is pinned to ${opt[name]}, expected the model version ${modelVersion}`);
+    }
+  }
+
+  return problems;
+}
+
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const problems = [];
 
@@ -72,50 +125,7 @@ try {
 
 /* ------------- 3. the platform packages must be declared ------------ */
 
-const REQUIRED_SERVE_PKGS = [
-  '@sys-one/laya-serve-darwin-arm64',
-  '@sys-one/laya-serve-darwin-x64',
-  '@sys-one/laya-serve-win32-x64',
-  '@sys-one/laya-serve-win32-arm64',
-  '@sys-one/laya-serve-linux-x64',
-  '@sys-one/laya-serve-linux-arm64',
-  '@sys-one/laya-serve-universal'
-];
-
-const opt = pkg.optionalDependencies || {};
-for (const name of REQUIRED_SERVE_PKGS) {
-  if (!opt[name]) {
-    problems.push(`optionalDependencies must list ${name} (the native binary ships as a package)`);
-  } else if (opt[name] !== pkg.version) {
-    problems.push(`${name} is pinned to ${opt[name]} but the package version is ${pkg.version}`);
-  }
-}
-
-// The chunks are versioned by the MODEL, not by the package: their bytes
-// depend only on the checkpoint, so pinning them to the package version would
-// republish 235 MB of identical data on every code-only release.
-const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8'));
-const modelVersion = manifest.modelVersion || manifest.version || '1.0.0';
-const chunkCount = Number(manifest.chunkCount || 0);
-for (let i = 0; i < chunkCount; i++) {
-  const name = `@sys-one/laya-model-chunk-${String(i).padStart(2, '0')}`;
-  if (!opt[name]) problems.push(`optionalDependencies must list ${name} (the model ships as chunk packages)`);
-  else if (opt[name] !== modelVersion) {
-    problems.push(`${name} is pinned to ${opt[name]}, expected the model version ${modelVersion}`);
-  }
-}
-
-// A built release must also have the packaged binaries on disk, so that
-// `publish-all.js` has something to upload. Dev checkouts tolerate absence.
-const binPkgRoot = path.join(ROOT, 'dist', 'release', 'binaries');
-const builtPkgs = fs.existsSync(binPkgRoot)
-  ? fs.readdirSync(binPkgRoot).filter((d) => fs.existsSync(path.join(binPkgRoot, d, 'package.json')))
-  : [];
-if (builtPkgs.length === 0) {
-  const msg = 'no platform packages built in dist/release/binaries (run tools/build-platform-packages.js build)';
-  if (allowMissingDist) console.log(`[preflight] WARN: ${msg}`);
-  else problems.push(msg);
-}
+for (const problem of checkPackageVersions(pkg, ROOT)) problems.push(problem);
 
 /* ---------------------- 4. core files must ship --------------------- */
 

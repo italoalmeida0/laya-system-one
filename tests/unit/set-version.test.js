@@ -108,3 +108,53 @@ test('set-version: rejects a version that is not semver', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+test('preflight: chunks are checked against the model version, not the package', async () => {
+  // This rule lives in three places (set-version, publish-all, preflight) and
+  // the preflight was the one that got missed: publishing 1.2.0 failed with
+  // 13 "pinned to 1.1.0, expected 1.2.0" errors for chunks that were correct.
+  // The test calls the real exported function, not a copy of the rule.
+  const { checkPackageVersions } = await import('../../tools/preflight-publish.js');
+  const dir = sandbox();
+  try {
+    const main = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    main.version = '1.2.0';
+    main.optionalDependencies = {
+      '@sys-one/laya-serve-darwin-arm64': '1.2.0',
+      '@sys-one/laya-serve-darwin-x64': '1.2.0',
+      '@sys-one/laya-serve-win32-x64': '1.2.0',
+      '@sys-one/laya-serve-win32-arm64': '1.2.0',
+      '@sys-one/laya-serve-linux-x64': '1.2.0',
+      '@sys-one/laya-serve-linux-arm64': '1.2.0',
+      '@sys-one/laya-serve-universal': '1.2.0',
+      '@sys-one/laya-model-chunk-00': '1.0.0',
+      '@sys-one/laya-model-chunk-01': '1.0.0'
+    };
+    // the sandbox manifest declares modelVersion 1.0.0 and 2 chunks
+    fs.writeFileSync(path.join(dir, 'models', 'model.manifest.json'), JSON.stringify({
+      modelVersion: '1.0.0', chunkCount: 2,
+      chunks: [
+        { index: 0, package: '@sys-one/laya-model-chunk-00', version: '1.0.0' },
+        { index: 1, package: '@sys-one/laya-model-chunk-01', version: '1.0.0' }
+      ]
+    }, null, 2));
+
+    assert.deepEqual(checkPackageVersions(main, dir), [],
+      'binaries at the package version and chunks at the model version must pass');
+
+    // and the failure it used to produce must still be caught
+    const wrong = structuredClone(main);
+    wrong.optionalDependencies['@sys-one/laya-model-chunk-00'] = '1.2.0';
+    const problems = checkPackageVersions(wrong, dir);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /chunk-00 is pinned to 1\.2\.0, expected the model version 1\.0\.0/);
+
+    // a binary at the wrong version is still an error
+    const badBin = structuredClone(main);
+    badBin.optionalDependencies['@sys-one/laya-serve-linux-x64'] = '1.1.0';
+    assert.match(checkPackageVersions(badBin, dir)[0], /package version is 1\.2\.0/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
