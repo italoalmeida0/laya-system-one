@@ -113,9 +113,26 @@ const PACKAGES = [
   }
 ];
 
-const ALL_SOURCES = fs.existsSync(BIN_DIR)
-  ? fs.readdirSync(BIN_DIR, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
-  : [];
+/** Slots present either as a local build or inside an already-staged package. */
+function allSources() {
+  const found = new Set();
+  if (fs.existsSync(BIN_DIR)) {
+    for (const e of fs.readdirSync(BIN_DIR, { withFileTypes: true })) {
+      if (e.isDirectory()) found.add(e.name);
+    }
+  }
+  if (fs.existsSync(OUT_DIR)) {
+    for (const pkg of fs.readdirSync(OUT_DIR, { withFileTypes: true })) {
+      if (!pkg.isDirectory()) continue;
+      const bin = path.join(OUT_DIR, pkg.name, 'bin');
+      if (!fs.existsSync(bin)) continue;
+      for (const e of fs.readdirSync(bin, { withFileTypes: true })) {
+        if (e.isDirectory()) found.add(e.name);
+      }
+    }
+  }
+  return [...found].sort();
+}
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -182,11 +199,32 @@ function copyIfExists(src, destDir) {
  * same layout (including the universal one), so the JS loader has a single
  * shape to look for: bin/<slot>/<file>.
  */
+/**
+ * Where a slot's files are. Two sources are possible:
+ *   - dist/bin/<slot>/   a local build (cargo output, make-bundle)
+ *   - dist/release/binaries/@sys-one__laya-serve-<pkg>/bin/<slot>/
+ *     the same files already packaged, which is what CI's entry job holds:
+ *     there the binaries arrive as artifacts, not in dist/bin.
+ * Returns null when neither exists.
+ */
+function resolveSlotDir(slot) {
+  const direct = path.join(BIN_DIR, slot);
+  if (fs.existsSync(direct)) return direct;
+
+  if (!fs.existsSync(OUT_DIR)) return null;
+  for (const entry of fs.readdirSync(OUT_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(OUT_DIR, entry.name, 'bin', slot);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function stageSlots(slots, pkgDir) {
   const written = [];
   for (const slot of slots) {
-    const slotDir = path.join(BIN_DIR, slot);
-    if (!fs.existsSync(slotDir)) continue;
+    const slotDir = resolveSlotDir(slot);
+    if (!slotDir) continue;
     const dest = path.join(pkgDir, 'bin', slot);
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(slotDir, { withFileTypes: true })) {
@@ -226,7 +264,7 @@ function cmdBuild(args) {
     // entry job assembles the universal package next to the ones it just
     // copied from the artifacts.
     fs.rmSync(pkgDir, { recursive: true, force: true });
-    const slots = pkg.source === null ? ALL_SOURCES : [].concat(pkg.source);
+    const slots = pkg.source === null ? allSources() : [].concat(pkg.source);
     const staged = stageSlots(slots, pkgDir);
 
     if (staged.length === 0) {
@@ -284,7 +322,7 @@ function cmdList() {
     const sel = pkg.os ? `os=[${pkg.os}] cpu=[${pkg.cpu}]` : 'os/cpu: any (universal fallback)';
     console.log(`  ${pkg.name.padEnd(38)} ${sel}`);
   }
-  console.log('\ndist/bin slots present: ' + (ALL_SOURCES.join(', ') || '(none)'));
+  console.log('\nslots present (dist/bin or staged packages): ' + (allSources().join(', ') || '(none)'));
 }
 
 function main() {
