@@ -12,16 +12,35 @@
  *   const logits = await pool.infer({ ids, markers, qtype: 0 });
  *   await pool.close();
  */
-import { Worker } from 'node:worker_threads';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isBrowser, envInt } from './env.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Node builtins lazily: node:worker_threads does not exist in a browser, and
+// importing it at module scope makes this file unresolvable there. In the
+// browser the pool runs the engine inline (one instance, no workers) - the
+// wasm module is single-threaded anyway, so a pool would only add copies of
+// the 309 MB of weights.
+let _node = null;
+async function nodeBuiltins() {
+  if (!_node) {
+    const [wt, os, path, url] = await Promise.all([
+      import('node:worker_threads'), import('node:os'),
+      import('node:path'), import('node:url')
+    ]);
+    _node = { Worker: wt.Worker, os: os.default, path: path.default, url };
+  }
+  return _node;
+}
+
+async function defaultModelPath() {
+  if (isBrowser) return new URL('../models/model.onnx', import.meta.url).href;
+  const { path, url } = await nodeBuiltins();
+  return path.join(path.dirname(url.fileURLToPath(import.meta.url)), '../models/model.onnx');
+}
 
 export class WasmPool {
   constructor(options = {}) {
-    this.modelPath = options.modelPath || path.join(__dirname, '../models/model.onnx');
+    this.modelPath = options.modelPath || null; // resolved in ready()
+    this.wasmBase = options.wasmBase || null;
     this.size = Math.max(1, options.size || defaultPoolSize());
     this.workers = [];
     this.pending = new Map(); // id -> { resolve, reject }
@@ -40,8 +59,19 @@ export class WasmPool {
   }
 
   async _spawn() {
-    const workerPath = path.join(__dirname, 'laya-wasm-worker.js');
+    if (!this.modelPath) this.modelPath = await defaultModelPath();
+
+    // Browser: no worker_threads. Load one engine inline and answer directly.
+    if (isBrowser) {
+      const { loadWasmModel } = await import('./laya-wasm.js');
+      this.inline = await loadWasmModel(this.modelPath, { wasmBase: this.wasmBase });
+      return this;
+    }
+
+    const { path } = await nodeBuiltins();
+    const workerPath = path.join(path.dirname((await nodeBuiltins()).url.fileURLToPath(import.meta.url)), 'laya-wasm-worker.js');
     const loads = [];
+    const { Worker } = await nodeBuiltins();
     for (let i = 0; i < this.size; i++) {
       const w = new Worker(workerPath);
       w.busy = false;
@@ -101,6 +131,18 @@ export class WasmPool {
   /** Run one inference on the next free worker (waits if all busy). */
   async infer({ ids, attn, markers, markerMask, qtype }) {
     await this.ready();
+
+    // Browser: one inline engine, called directly. tract's plan is not
+    // reentrant, so calls are serialized through a promise chain.
+    if (this.inline) {
+      const run = async () => {
+        const logits = this.inline.infer(ids, attn, markers, markerMask, qtype);
+        return { logits };
+      };
+      this._chain = (this._chain || Promise.resolve()).then(run, run);
+      return this._chain;
+    }
+
     const w = await this._acquire();
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
@@ -133,7 +175,11 @@ function defaultPoolSize() {
   // the pool size multiplies the footprint. The wasm engine is the
   // portability fallback (the fast path is the native binary), so one worker
   // is the sane default; raise it with LAYA_WASM_WORKERS for throughput.
-  const env = parseInt(process.env.LAYA_WASM_WORKERS || '', 10);
-  if (Number.isFinite(env) && env > 0) return Math.min(env, 8);
+  //
+  // A browser has no workers here (it runs the engine inline) and no
+  // environment, so this must not touch either.
+  if (isBrowser) return 1;
+  const env = envInt('LAYA_WASM_WORKERS');
+  if (env && env > 0) return Math.min(env, 8);
   return 1;
 }

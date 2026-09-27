@@ -18,26 +18,80 @@
  *   SIMD (wasm-opt -O3) + zero native-bridge overhead. For parallel
  *   requests, run N workers (see README) — each with its own instance.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isBrowser, env } from './env.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Node builtins are imported lazily, not at the top of the module: a static
+// `import fs from 'node:fs'` fails to resolve in a browser even when the code
+// path never touches the filesystem, which is what made this module
+// unloadable there.
+let _node = null;
+async function nodeBuiltins() {
+  if (!_node) {
+    const [fs, path, url] = await Promise.all([
+      import('node:fs'),
+      import('node:path'),
+      import('node:url')
+    ]);
+    _node = { fs: fs.default, path: path.default, url };
+  }
+  return _node;
+}
 
 let _mod = null;      // wasm-bindgen JS glue
 let _wasmBytes = null;
 
-async function getModule() {
-  if (_mod) return _mod;
-  const pkgDir = path.join(__dirname, 'wasm-pkg');
-  if (!_wasmBytes) {
-    _wasmBytes = fs.readFileSync(path.join(pkgDir, 'laya_inference_bg.wasm'));
+/**
+ * Where the wasm-pack output lives.
+ *
+ * Two things are resolved separately, because they load differently:
+ *   - the .wasm BYTES are fetched (works over http in a browser, from disk on
+ *     Node), so `wasmBase`/LAYA_WASM_BASE can point them at a CDN;
+ *   - the glue MODULE is imported, and Node's ESM loader only accepts file:
+ *     and data: URLs, so on Node it always comes from the package directory.
+ */
+async function wasmPkgUrls(options = {}) {
+  const override = options.wasmBase || env('LAYA_WASM_BASE');
+  const remoteBase = override ? new URL(String(override).replace(/\/?$/, '/'), import.meta.url) : null;
+
+  if (isBrowser) {
+    const base = remoteBase || new URL('./wasm-pkg/', import.meta.url);
+    return {
+      glue: new URL('laya_inference.js', base).href,
+      wasm: new URL('laya_inference_bg.wasm', base).href
+    };
   }
-  // The wasm-pack `--target web` glue imports from './laya_inference_bg.js'
-  // relatively — import it via file URL so it resolves on Node/Bun.
-  const glueUrl = pathToFileURL(path.join(pkgDir, 'laya_inference.js')).href;
-  const glue = await import(glueUrl);
-  // `initSync` takes the raw bytes (no fetch needed server-side).
+
+  const { path, url } = await nodeBuiltins();
+  const pkgDir = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'wasm-pkg');
+  return {
+    // Node cannot import over http:, so the glue is always local here
+    glue: url.pathToFileURL(path.join(pkgDir, 'laya_inference.js')).href,
+    wasm: remoteBase
+      ? new URL('laya_inference_bg.wasm', remoteBase).href
+      : url.pathToFileURL(path.join(pkgDir, 'laya_inference_bg.wasm')).href
+  };
+}
+
+async function getModule(options = {}) {
+  if (_mod) return _mod;
+  const urls = await wasmPkgUrls(options);
+
+  if (!_wasmBytes) {
+    if (isBrowser) {
+      const res = await fetch(urls.wasm);
+      if (!res.ok) throw new Error(`could not fetch the wasm engine: ${res.status} ${urls.wasm}`);
+      _wasmBytes = new Uint8Array(await res.arrayBuffer());
+    } else {
+      const { fs } = await nodeBuiltins();
+      _wasmBytes = fs.readFileSync(new URL(urls.wasm));
+    }
+  }
+
+  // The wasm-pack `--target web` glue imports its sibling relatively, so it
+  // resolves the same way from a file URL or a browser URL.
+  const glue = await import(/* @vite-ignore */ urls.glue);
+  // `initSync` takes the raw bytes: no fetch inside the glue, which keeps the
+  // same code path on both runtimes.
   glue.initSync({ module: _wasmBytes });
   _mod = glue;
   return glue;
@@ -47,11 +101,19 @@ async function getModule() {
  * Load a model. `source`: path to model.onnx or Uint8Array of its bytes.
  * Returns { infer(ids, attn, markers, markerMask, qtype) -> Float32Array, cacheSize(), free() }.
  */
-export async function loadWasmModel(source) {
-  const glue = await getModule();
+export async function loadWasmModel(source, options = {}) {
+  const glue = await getModule(options);
   let bytes;
   if (typeof source === 'string') {
-    bytes = fs.readFileSync(source);
+    // A path on Node, a URL in the browser.
+    if (isBrowser) {
+      const res = await fetch(source);
+      if (!res.ok) throw new Error(`could not fetch the model: ${res.status} ${source}`);
+      bytes = new Uint8Array(await res.arrayBuffer());
+    } else {
+      const { fs } = await nodeBuiltins();
+      bytes = fs.readFileSync(source);
+    }
   } else if (source instanceof Uint8Array) {
     bytes = source;
   } else {

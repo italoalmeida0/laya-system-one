@@ -1,11 +1,46 @@
-import path from 'node:path';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { envInt, isBrowser } from './env.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Node builtins lazily: a static import makes this module unresolvable in a
+// browser even when the browser path never touches the filesystem.
+let _node = null;
+async function nodeBuiltins() {
+  if (!_node) {
+    const [path, fs, url] = await Promise.all([
+      import('node:path'), import('node:fs'), import('node:url')
+    ]);
+    _node = { path: path.default, fs: fs.default, url };
+  }
+  return _node;
+}
 
-import { resolveModel } from './model-resolver.js';
-import { envInt } from './env.js';
+/** The package's models/ directory: a path on Node, a URL in the browser. */
+async function defaultModelDir() {
+  if (isBrowser) return new URL('../models/', import.meta.url).href;
+  const { path, url } = await nodeBuiltins();
+  return path.resolve(path.dirname(url.fileURLToPath(import.meta.url)), '../models');
+}
+
+/** Read rl_agent_config.json, tolerating its absence (defaults apply). */
+async function readConfig(modelDir) {
+  const defaults = {
+    max_len: 2048, head_max_len: 256,
+    temperature: [1.0, 1.0, 1.0], temperature_by_options: {}
+  };
+  const base = String(modelDir).replace(/\/?$/, '/');
+  try {
+    if (isBrowser || /^https?:/.test(base)) {
+      const res = await fetch(`${base}rl_agent_config.json`);
+      if (!res.ok) return defaults;
+      return { ...defaults, ...(await res.json()) };
+    }
+    const { path, fs } = await nodeBuiltins();
+    const p = path.join(modelDir, 'rl_agent_config.json');
+    if (!fs.existsSync(p)) return defaults;
+    return { ...defaults, ...JSON.parse(fs.readFileSync(p, 'utf-8')) };
+  } catch {
+    return defaults;
+  }
+}
 
 /**
  * Resolve `model.onnx` to a local path, acquiring it if needed.
@@ -18,6 +53,13 @@ import { envInt } from './env.js';
  * @returns {Promise<string>} absolute path to model.onnx
  */
 export async function resolveModelPath(modelDir, options = {}) {
+  // The browser has no filesystem, no npm chunk packages and no cache
+  // directory, so the Node resolver does not apply: the model is a URL.
+  if (isBrowser) {
+    if (options.modelPath) return options.modelPath;
+    return new URL('model.onnx', String(modelDir).replace(/\/?$/, '/')).href;
+  }
+  const { resolveModel } = await import('./model-resolver.js');
   const resolved = await resolveModel({ modelDir, ...options });
   return resolved.path;
 }
@@ -71,28 +113,18 @@ export class LayaEngine {
   /** Use the pure-Rust wasm (tract) worker pool (no ORT anywhere). */
   async useWasmBackend(options = {}) {
     const { WasmPool } = await import('./laya-wasm-pool.js');
-    const modelDir = options.modelDir || path.resolve(__dirname, '../models');
+    const modelDir = options.modelDir || await defaultModelDir();
     const modelPath = options.modelPath || await resolveModelPath(modelDir, options);
-    this.wasmPool = new WasmPool({ modelPath, size: options.wasmWorkers });
+    this.wasmPool = new WasmPool({ modelPath, size: options.wasmWorkers, wasmBase: options.wasmBase });
     await this.wasmPool.ready();
     this.backend = 'wasm';
     return this;
   }
 
   static async load(options = {}) {
-    const modelDir = options.modelDir || path.resolve(__dirname, '../models');
-    const modelPath = await resolveModelPath(modelDir, options);
-    const configPath = path.join(modelDir, 'rl_agent_config.json');
-
-    let config = {
-      max_len: 1024,
-      head_max_len: 256,
-      temperature: [1.0, 1.0, 1.0],
-      temperature_by_options: {}
-    };
-    if (fs.existsSync(configPath)) {
-      try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { /* defaults */ }
-    }
+    const modelDir = options.modelDir || await defaultModelDir();
+    const modelPath = options.modelPath || await resolveModelPath(modelDir, options);
+    const config = await readConfig(modelDir);
 
     const engine = new LayaEngine(null, config);
     await engine.useWasmBackend({ ...options, modelDir, modelPath });

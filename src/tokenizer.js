@@ -1,11 +1,25 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { BpeTokenizer, makeTokenizerCallable } from './bpe-tokenizer.js';
+import { isBrowser } from './env.js';
+
+// Node builtins are loaded lazily: a static import of node:path makes this
+// module unresolvable in a browser, even though the browser path only ever
+// fetches the tokenizer over HTTP.
+let _path = null;
+async function nodePath() {
+  if (!_path) _path = (await import('node:path')).default;
+  return _path;
+}
 
 // WeakMap<tokenizer, Map<text, number[]>> - avoids leaking tokenizers.
 const _encodeCache = new WeakMap();
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** The package's models/ directory, as an absolute path or a URL. */
+async function defaultModelDir() {
+  if (isBrowser) return new URL('../models/', import.meta.url).href;
+  const path = await nodePath();
+  const { fileURLToPath } = await import('node:url');
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../models');
+}
 
 export const QTYPES = {
   choice: 0,
@@ -117,8 +131,9 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
 }
 
 export async function loadTokenizer(modelDir) {
-  const dir = modelDir || path.resolve(__dirname, '../models');
-  const isRemote = /^(https?|file):/.test(String(dir));
+  const dir = modelDir || await defaultModelDir();
+  const isRemote = /^(https?:|file:|\/)/.test(String(dir)) || isBrowser;
+  const path = isRemote ? null : await nodePath();
   const src = isRemote ? String(dir).replace(/\/?$/, '/tokenizer.json') : path.join(dir, 'tokenizer.json');
 
   let json;
