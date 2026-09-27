@@ -13,14 +13,18 @@ name: build packages
 # installs a published version on every platform (musl, node, bun) and runs it.
 
 on:
+  # On demand only. Building all eight platforms (Rust + macOS Intel + Alpine)
+  # costs ~15 minutes of runner time, and a commit rarely needs a new build:
+  # the artifacts only matter when you are about to publish, and that is a
+  # deliberate act. A tag still builds automatically, since tagging is how a
+  # release is declared.
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build (e.g. 1.1.0-alpha.0). Empty = package.json as committed.'
+        description: 'Version to build (e.g. 1.1.0-alpha.1). Empty = package.json as committed.'
         required: false
         default: ''
   push:
-    branches: [main]
     tags: ['v*']
 
 concurrency:
