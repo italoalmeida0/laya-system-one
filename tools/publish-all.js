@@ -81,6 +81,12 @@ function runInteractive(cmd, cmdArgs, opts = {}) {
   });
 }
 
+/** Is a command available on PATH? */
+function hasCommand(name) {
+  const probe = process.platform === 'win32' ? 'where' : 'which';
+  return spawnSync(probe, [name], { encoding: 'utf8', shell: process.platform === 'win32' }).status === 0;
+}
+
 /** True when name@version already exists on the registry. */
 function alreadyPublished(name, version) {
   const r = runCapture('npm', ['view', `${name}@${version}`, 'version', '--json']);
@@ -282,6 +288,17 @@ async function cmdPublish(args) {
   // URL and can exit with EOTP instead of waiting, so a code is the path that
   // always works - and it is reused for every package in this run.
   const otp = args.otp || process.env.LAYA_NPM_OTP || null;
+  // 'bun' uploads faster and takes the same flags; 'npm' is the default so a
+  // plain `npm login` is enough to get started.
+  const publisher = args.publisher || process.env.LAYA_PUBLISHER || 'npm';
+  if (!['npm', 'bun'].includes(publisher)) {
+    console.error(`[publish] unknown publisher '${publisher}' (use npm or bun)`);
+    process.exit(1);
+  }
+  if (publisher === 'bun' && !hasCommand('bun')) {
+    console.error('[publish] bun is not on PATH; install it or use --publisher npm');
+    process.exit(1);
+  }
   if (!['alpha', 'beta', 'latest', 'next'].includes(tag)) {
     console.error(`[publish] refusing unknown tag '${tag}' (use alpha|beta|next|latest)`);
     process.exit(1);
@@ -300,7 +317,7 @@ async function cmdPublish(args) {
     console.error('[publish] not logged in to npm. Run: npm login');
     process.exit(1);
   }
-  console.log(`[publish] logged in as ${who.stdout.trim()}, tag=${tag}${dryRun ? ' (dry run)' : ''}\n`);
+  console.log(`[publish] logged in as ${who.stdout.trim()}, tag=${tag}, publisher=${publisher}${dryRun ? ' (dry run)' : ''}\n`);
 
   // never publish a half-matched set: npm skips a missing optionalDependency
   // silently, so a version skew ships an install that finds no binary.
@@ -337,10 +354,11 @@ async function cmdPublish(args) {
     const npmArgs = ['publish', '--tag', tag, '--access', 'public'];
     if (dryRun) npmArgs.push('--dry-run');
     if (otp) npmArgs.push('--otp', otp);
+    if (publisher === 'bun') npmArgs.push('--auth-type', 'web');
 
     const size = dirSize(dir);
     console.log(`\n[publish] [${++done}/${total}] ${dryRun ? 'checking' : 'uploading'} ${pkg.name}@${pkg.version} (${size}) ...`);
-    const r = await runInteractive('npm', npmArgs, { cwd: dir });
+    const r = await runInteractive(publisher, npmArgs, { cwd: dir });
     if (r.code !== 0) {
       console.error(`\n[publish] FAILED ${pkg.name}@${pkg.version} (npm exited ${r.code})`);
       console.error('[publish] stopping so you can fix it before the rest go out.');
@@ -385,6 +403,8 @@ function main() {
   list                             show the staged leaf packages
   publish --tag alpha              publish (safe: alpha dist-tag)
   publish --tag alpha --otp 123456  publish, supplying the 2FA code yourself
+  publish --tag alpha --publisher bun
+                                   publish with bun (faster uploads)
   publish --tag latest --i-understand-latest
                                    the real release (verify the alpha first)
   publish --tag alpha --dry-run    show what would be published
