@@ -44,6 +44,16 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
   process.exit(1);
 }
 
+/** How many chunk packages the checkpoint is cut into, from the manifest. */
+function readChunkCount() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'models', 'model.manifest.json'), 'utf8'));
+    return Number(manifest.chunkCount) || 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** The checkpoint's version, from the manifest; independent of the package. */
 function readModelVersion() {
   try {
@@ -88,6 +98,17 @@ edit('package.json', (j) => {
     if (!name.startsWith('@sys-one/')) continue;
     if (name.includes('model-chunk')) j.optionalDependencies[name] = modelVersion;
     else j.optionalDependencies[name] = binaryVersion;
+  }
+  // Drop chunk dependencies past the checkpoint's chunk count. A package that
+  // lists more chunks than exist makes npm (and bun) fetch packages that will
+  // never be published - seven 404s on every install, for a model that ships
+  // six. The count comes from the manifest, so it cannot drift.
+  const expected = readChunkCount();
+  if (expected > 0) {
+    for (const name of Object.keys(j.optionalDependencies)) {
+      const m = /model-chunk-(\d+)$/.exec(name);
+      if (m && Number.parseInt(m[1], 10) >= expected) delete j.optionalDependencies[name];
+    }
   }
   return prev;
 });

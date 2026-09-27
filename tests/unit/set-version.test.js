@@ -159,3 +159,34 @@ test('preflight: chunks are checked against the model version, not the package',
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('set-version drops chunk dependencies past the checkpoint count', () => {
+  // A package listing more chunks than exist makes npm and bun fetch packages
+  // that will never be published - seven 404s on every install, for a model
+  // that ships six. The count comes from the manifest, so it cannot drift.
+  const dir = sandbox();
+  try {
+    const main = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    main.optionalDependencies['@sys-one/laya-model-chunk-02'] = '1.0.0';
+    main.optionalDependencies['@sys-one/laya-model-chunk-03'] = '1.0.0';
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(main, null, 2));
+    // the sandbox manifest declares 2 chunks
+    fs.writeFileSync(path.join(dir, 'models', 'model.manifest.json'), JSON.stringify({
+      modelVersion: '1.0.0', chunkCount: 2,
+      chunks: [
+        { index: 0, package: '@sys-one/laya-model-chunk-00', version: '1.0.0' },
+        { index: 1, package: '@sys-one/laya-model-chunk-01', version: '1.0.0' }
+      ]
+    }, null, 2));
+
+    runSetVersion(dir, '1.3.2');
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const chunks = Object.keys(after.optionalDependencies).filter((k) => k.includes('model-chunk'));
+    assert.deepEqual(chunks.sort(), ['@sys-one/laya-model-chunk-00', '@sys-one/laya-model-chunk-01'],
+      'only the chunks the checkpoint actually has may be listed');
+    assert.ok(!('@sys-one/laya-model-chunk-02' in after.optionalDependencies));
+    assert.ok(!('@sys-one/laya-model-chunk-03' in after.optionalDependencies));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
