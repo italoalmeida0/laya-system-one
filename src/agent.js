@@ -1,4 +1,5 @@
 import { loadTokenizer, buildSequence, QTYPES } from './tokenizer.js';
+import { env, envInt, defaultBackend } from './env.js';
 import { LayaEngine } from './engine.js';
 
 /**
@@ -156,7 +157,10 @@ export class Laya {
    *   'wasm'   - the bundled pure-Rust tract wasm engine (browser-safe).
    */
   static async load(options = {}) {
-    const backend = options.backend || process.env.LAYA_BACKEND || 'native';
+    // defaultBackend() is 'wasm' in a browser: 'native' spawns a process,
+    // which a browser cannot do, and the documented example calls load()
+    // with no options at all.
+    const backend = options.backend || defaultBackend();
     if (backend === 'native') {
       const { NativeServer } = await import('./laya-native.js');
       const srv = new NativeServer({
@@ -204,7 +208,7 @@ export class Laya {
     // on Bun to 63 (plenty for choice/score/noul prompts) unless the user
     // overrides via options.maxLen / LAYA_MAX_LEN. Node keeps config max.
     const isBunRt = typeof Bun !== 'undefined';
-    const envMax = parseInt(process.env.LAYA_MAX_LEN || '', 10);
+    const envMax = envInt('LAYA_MAX_LEN');
     const defaultMax = this.config.max_len || 1024;
     const maxLen = options?.maxLen || (Number.isFinite(envMax) && envMax > 0 ? envMax : (isBunRt ? Math.min(defaultMax, 63) : defaultMax));
     const headMaxLen = this.config.head_max_len || 256;

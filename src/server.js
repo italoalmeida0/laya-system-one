@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Laya } from './agent.js';
+import { env } from './env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,12 +28,12 @@ const PKG_VERSION = (() => {
  * @returns {Promise<{ server: http.Server, url: string, laya: object, close: Function }>}
  */
 export async function serve(options = {}) {
-  const host = options.host || process.env.HOST || '0.0.0.0';
+  const host = options.host || env('HOST') || '0.0.0.0';
   // `port: 0` means "pick a free port" — it must not be treated as unset.
-  const portRaw = options.port ?? process.env.PORT;
+  const portRaw = options.port ?? env('PORT');
   const parsed = Number.parseInt(portRaw ?? '8080', 10);
   const port = Number.isFinite(parsed) ? parsed : 8080;
-  const apiKey = options.apiKey || process.env.LAYA_API_KEY || process.env.API_KEY || null;
+  const apiKey = options.apiKey || env('LAYA_API_KEY') || env('API_KEY') || null;
   // When we create the engine ourselves we also own its lifecycle: close()
   // must release it (the native backend spawns a laya-serve child process —
   // leaving it alive keeps the Node event loop busy and the process hangs

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import { resolveModel } from './model-resolver.js';
+import { envInt } from './env.js';
 
 /**
  * Resolve `model.onnx` to a local path, acquiring it if needed.
@@ -94,7 +95,7 @@ export class LayaEngine {
     // max_len bucket (slow but rare). Both mask the padding out, so the
     // answer is identical to the unpadded one.
     // read per call so LAYA_WASM_PAD can be tuned without a restart
-    const padLen = Number.parseInt(process.env.LAYA_WASM_PAD || '', 10) || 256;
+    const padLen = envInt('LAYA_WASM_PAD') || 256;
     const S = item.ids.length <= padLen ? padLen : (this.config.max_len || 1024);
     const M = 32;
     if (item.ids.length > S) {
