@@ -282,3 +282,40 @@ test('Laya.predict: sequence layout is cls + head + [mask..] options + state + s
     assert.equal(item.ids[m], 4, 'marker points at [MASK]');
   }
 });
+
+
+test('buildServerArgs: the token budget reaches the binary', async () => {
+  // The binary reads the config file itself, so an option that is silently
+  // dropped leaves long inputs truncated at the default with no error.
+  const { buildServerArgs } = await import('../../src/laya-native.js');
+  const base = { modelDir: 'models', host: '127.0.0.1', port: 0, threads: 0 };
+
+  const withOption = buildServerArgs({ ...base, maxLen: 8192 });
+  assert.equal(withOption[withOption.indexOf('--max-len') + 1], '8192',
+    'an explicit maxLen must be passed through');
+
+  const without = buildServerArgs({ ...base });
+  assert.equal(without.includes('--max-len'), false,
+    'no maxLen means no flag: the binary falls back to the config file');
+
+  // LAYA_MAX_LEN is the middle step of the precedence
+  const prev = process.env.LAYA_MAX_LEN;
+  try {
+    process.env.LAYA_MAX_LEN = '4096';
+    const fromEnv = buildServerArgs({ ...base });
+    assert.equal(fromEnv[fromEnv.indexOf('--max-len') + 1], '4096');
+
+    // an explicit option still wins over the environment
+    const both = buildServerArgs({ ...base, maxLen: 8192 });
+    assert.equal(both[both.indexOf('--max-len') + 1], '8192');
+  } finally {
+    if (prev === undefined) delete process.env.LAYA_MAX_LEN;
+    else process.env.LAYA_MAX_LEN = prev;
+  }
+
+  // junk must not produce a flag the binary would reject
+  for (const bad of [0, -1, NaN, 'x', null, undefined]) {
+    const args = buildServerArgs({ ...base, maxLen: bad });
+    assert.equal(args.includes('--max-len'), false, `maxLen=${String(bad)} must not emit the flag`);
+  }
+});

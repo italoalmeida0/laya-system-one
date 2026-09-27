@@ -4,6 +4,30 @@ All notable changes to `laya-system-one` are documented here.
 
 ## [1.1.0] — 2026-09-26
 
+### Added: configurable context length
+
+The model reads up to 8,192 tokens, but the shipped budget was 1,024 — long
+messages were truncated and could be misread (a ~3,000-token input answered
+`sales` where the full text answers `billing`).
+
+- The default is now **2,048 tokens**: enough for a real ticket or email,
+  still comfortable on a weak machine.
+- It is configurable three ways, in this order of precedence:
+  `--max-len <n>` on the binary, `LAYA_MAX_LEN`, or `maxLen` in
+  `Laya.load({ maxLen })` / `serve({ maxLen })`. All accept up to 8192.
+- The cap is not a cost: work follows the input's real length, so short
+  questions answer in the same ~90 ms whatever the limit is.
+- Accuracy degrades with length (upstream measured 16–18 of 20 correct up to
+  ~4,000 tokens, 8–17 of 20 beyond) and CPU cost grows faster than the input,
+  so the README documents both before recommending you raise it.
+
+### Added: a pipeline for rebuilding the model from upstream
+
+`model.onnx` is the upstream `convaiinnovations/laya-multilingual` checkpoint
+exported to ONNX and quantized to INT8. `tools/export-model.py` reproduces it,
+`tools/model-diff.js` proves a new file answers the same as the old one, and
+`update-model.yml` runs both on a runner.
+
 ### Removed: all external runtime dependencies
 
 The package now ships everything it needs and downloads nothing but the

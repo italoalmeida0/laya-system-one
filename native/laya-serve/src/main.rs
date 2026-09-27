@@ -42,6 +42,12 @@ struct Args {
     /// Bearer API key (optional; also LAYA_API_KEY)
     #[arg(long)]
     api_key: Option<String>,
+    /// Token budget for the state (overrides rl_agent_config.json).
+    /// The config ships a conservative 2048 so weak machines stay usable;
+    /// raise it for long documents. Cost follows the input's real length,
+    /// not this value, so short inputs are unaffected.
+    #[arg(long)]
+    max_len: Option<usize>,
 }
 
 struct AppState {
@@ -104,7 +110,15 @@ async fn main() -> anyhow::Result<()> {
 
     // ---- Config ----
     let cfg_path = args.model_dir.join("rl_agent_config.json");
-    let (max_len, head_max_len, temperatures) = read_config(&cfg_path);
+    let (cfg_max_len, head_max_len, temperatures) = read_config(&cfg_path);
+    // explicit flag > LAYA_MAX_LEN > config file
+    let env_max_len = std::env::var("LAYA_MAX_LEN").ok().and_then(|v| v.parse::<usize>().ok());
+    let max_len = args
+        .max_len
+        .or(env_max_len)
+        .filter(|n| *n > 0)
+        .unwrap_or(cfg_max_len);
+    tracing::info!("max_len = {max_len}");
 
     let prompts = PromptBuilder::new(
         tokenizer.clone(),

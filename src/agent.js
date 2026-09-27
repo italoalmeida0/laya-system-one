@@ -165,6 +165,7 @@ export class Laya {
         port: options.port,
         apiKey: options.apiKey,
         threads: options.threads,
+        maxLen: options.maxLen,
       });
       await srv.start();
       return new LayaNative(srv, options);
@@ -307,6 +308,7 @@ export class LayaNative {
       port: options.port,
       apiKey: options.apiKey,
       threads: options.threads,
+      maxLen: options.maxLen,
     });
     await srv.start();
     return new LayaNative(srv, options);

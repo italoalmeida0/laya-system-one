@@ -1,19 +1,19 @@
 {
   "encoder": "jhu-clsp/mmBERT-base",
   "head_layers": 2,
-  "max_len": 1024,
+  "max_len": 2048,
   "head_max_len": 256,
   "max_prefixes": 6,
   "act_costs": {
     "escalate": 0.5
   },
-  "cost_wrong_act": 3.0,
+  "cost_wrong_act": 3,
   "amp_dtype": "bf16",
   "model_name": "rl-agent",
   "temperature": [
-    1.0,
-    1.0,
-    1.0
+    1,
+    1,
+    1
   ],
   "temperature_by_options": {},
   "training": {

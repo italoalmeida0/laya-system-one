@@ -137,6 +137,28 @@ function binaryCandidates() {
 }
 
 /**
+ * The argument list for the native server. Pure, so the precedence between an
+ * explicit option, LAYA_MAX_LEN and the config file can be tested without
+ * spawning anything - a dropped option here silently leaves long inputs
+ * truncated with no error anywhere.
+ */
+export function buildServerArgs({ modelDir, host, port, threads, apiKey, maxLen } = {}) {
+  const args = [
+    '--model-dir', modelDir,
+    '--host', host,
+    '--port', String(port),
+    '--threads', String(threads),
+  ];
+  // Token budget: an explicit option wins, then LAYA_MAX_LEN, then whatever
+  // the config file says (the binary applies that last fallback itself, so we
+  // only pass a value when the caller asked for one).
+  const budget = maxLen ?? (process.env.LAYA_MAX_LEN ? Number(process.env.LAYA_MAX_LEN) : null);
+  if (Number.isFinite(budget) && budget > 0) args.push('--max-len', String(budget));
+  if (apiKey) args.push('--api-key', apiKey);
+  return args;
+}
+
+/**
  * Make sure a resolved binary is executable, and return it.
  *
  * npm and Bun do not preserve file modes, and install scripts are skipped by
@@ -209,6 +231,7 @@ export class NativeServer {
     this.port = options.port ?? 0;
     this.apiKey = options.apiKey || null;
     this.threads = options.threads ?? 0;
+    this.maxLen = options.maxLen ?? null;
     this.proc = null;
     this.url = null;
   }
@@ -232,12 +255,14 @@ export class NativeServer {
         ? bundledLib + ':' + spawnEnv.LD_LIBRARY_PATH
         : bundledLib;
     }
-    const args = [
-      '--model-dir', modelDir,
-      '--host', this.host,
-      '--port', String(this.port),
-      '--threads', String(this.threads),
-    ];
+    const args = buildServerArgs({
+      modelDir,
+      host: this.host,
+      port: this.port,
+      threads: this.threads,
+      apiKey: this.apiKey,
+      maxLen: this.maxLen
+    });
     if (this.apiKey) args.push('--api-key', this.apiKey);
     return new Promise((resolve, reject) => {
       const proc = spawn(bin, args, {

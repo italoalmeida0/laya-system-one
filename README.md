@@ -4,11 +4,18 @@
 [![Runtime](https://img.shields.io/badge/Runtime-Node.js%20%7C%20Bun%20%7C%20Browser-green.svg)]()
 [![TypeSafe Jev](https://img.shields.io/badge/Wire%20Protocol-TypeSafe%20Jev%20Compatible-orange.svg)]()
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)]()
+[![Built on Laya](https://img.shields.io/badge/Built%20on-Laya%20by%20Convai%20Innovations-8A2BE2.svg)](https://github.com/NandhaKishorM/laya)
 
 > **A fast, self-contained decision engine. Give it any text and a set of typed questions, and it answers them — offline, in milliseconds, in over 100 languages. Drop-in compatible with the TypeSafe Jev API (`POST /v1/systemone`).**
 
 Runs entirely on your machine. No Python, no PyTorch, no API keys, no cloud
 calls at inference time. One `npm install` and it works.
+
+> **Built on [Laya](https://github.com/NandhaKishorM/laya)** by
+> [Convai Innovations](https://huggingface.co/convaiinnovations) — a
+> community project. The model is theirs; this package makes it run in
+> Node.js, Bun and the browser with no Python in the loop. See
+> [Credits](#-credits).
 
 ---
 
@@ -129,6 +136,17 @@ console.log(`Laya server running at ${srv.url}/v1/systemone`);
 // later:
 await srv.close();
 ```
+
+### `Laya.load(options)` options
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `backend` | `'native'` | `native` (bundled Rust server) or `wasm` |
+| `modelDir` | the package's `models/` | where `model.onnx` and `tokenizer.json` live |
+| `maxLen` | `2048` | token budget for the state — raise it for long documents (max 8192, see [Long inputs](#long-inputs)) |
+| `apiKey` | `null` | require a Bearer token on the HTTP layer |
+| `port` / `host` | `0` / `127.0.0.1` | where the native server binds |
+| `threads` | `0` | inference threads (`0` = runtime default) |
 
 ---
 
@@ -299,6 +317,49 @@ runs, so treat these as orders of magnitude rather than exact figures.
 The `wasm` backend is roughly 100x slower — it exists so browsers and unusual
 platforms work at all, not for throughput.
 
+### Long inputs
+
+The model reads up to **8,192 tokens**, but it ships with a conservative
+**2,048-token** budget so it stays usable on weak machines. The budget is a
+cap, not a cost: **short inputs are unaffected by raising it** — a 74-token
+question answers in ~90 ms whatever the limit is, because the work follows the
+input's real length.
+
+Raise it when your inputs are long documents:
+
+```bash
+LAYA_MAX_LEN=8192 npx laya-system-one --port 8080
+```
+
+```js
+const laya = await Laya.load({ maxLen: 8192 });
+```
+
+Measured on one machine (Windows arm64, `native` backend), by input length:
+
+| tokens | default (2048) | `maxLen: 8192` |
+| ---: | ---: | ---: |
+| 74 | 88 ms | 88 ms |
+| 1,000 | 0.9 s | 0.9 s |
+| 2,000 | 6.4 s | 6.4 s |
+| 4,000 | 9.2 s *(truncated)* | 21.3 s |
+| 8,000 | 9.2 s *(truncated)* | 190 s |
+
+Two things worth knowing before you raise it:
+
+- **Accuracy degrades with length.** Upstream measured 16–18 of 20 requests
+  correct up to about 4,000 tokens, and 8–17 of 20 beyond that. Check your own
+  data — long-document accuracy is not something to assume.
+- **Cost grows steeply.** Past ~2,000 tokens the time climbs faster than the
+  input does (attention is quadratic). 8,000 tokens is minutes, not seconds,
+  on a CPU. If you routinely handle documents that long, truncate them
+  yourself to the part that matters, or run the upstream Python package on a
+  GPU.
+
+Truncation is the real risk of leaving it at the default: a long message gets
+cut off and the answer can be wrong rather than slow. On a ~3,000-token input
+the shipped default answered `sales` where the full text answers `billing`.
+
 ---
 
 ## 🧾 Environment variables
@@ -306,6 +367,7 @@ platforms work at all, not for throughput.
 | Variable | Effect |
 | :--- | :--- |
 | `LAYA_BACKEND` | `native` or `wasm` |
+| `LAYA_MAX_LEN` | token budget for the state (default 2048, max 8192) |
 | `LAYA_MODEL_PATH` | Use a `model.onnx` you already have (file or directory) |
 | `LAYA_MODEL_CHUNKS_DIR` | Directory holding the model chunks |
 | `LAYA_MODEL_URL` | Override where the model is downloaded from |
@@ -377,8 +439,33 @@ musl — and runs a real inference.
 
 ---
 
-## 📄 License & Attribution
+## 🙏 Credits
 
-- **License:** [Apache-2.0](LICENSE)
-- **Author:** [Italo Almeida](https://github.com/italoalmeida0)
-- **Repository:** [https://github.com/italoalmeida0/laya-system-one](https://github.com/italoalmeida0/laya-system-one)
+**This package would not exist without
+[Laya](https://github.com/NandhaKishorM/laya).** It is a community project by
+[Convai Innovations](https://huggingface.co/convaiinnovations) — the model,
+the architecture, the training method and the wire protocol are all theirs.
+What this package adds is a way to run it where Python is not an option:
+Node.js, Bun and the browser.
+
+| | |
+| :--- | :--- |
+| **Upstream project** | [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) |
+| **Model** | [`convaiinnovations/laya-multilingual`](https://huggingface.co/convaiinnovations/laya-multilingual) (mmBERT-base, 322M params) |
+| **Other checkpoints** | [`convaiinnovations/laya`](https://huggingface.co/convaiinnovations/laya) (English), [`laya-typed-decisions`](https://huggingface.co/convaiinnovations/laya-typed-decisions) |
+| **Demo** | [Hugging Face Space](https://huggingface.co/spaces/convaiinnovations/laya-demo) |
+| **Method** | RLCD — reinforcement learning against strictly proper scoring rules |
+| **License** | Apache-2.0 (upstream and this package alike) |
+
+If you find this useful, the credit belongs upstream — star
+[their repository](https://github.com/NandhaKishorM/laya) and consider
+[supporting the author](https://www.buymeacoffee.com/nandakishorm).
+
+## 📄 License
+
+[Apache-2.0](LICENSE) — the same license as the upstream project.
+
+- **This package:** [Italo Almeida](https://github.com/italoalmeida0) —
+  [laya-system-one](https://github.com/italoalmeida0/laya-system-one)
+- **Model & upstream:** Convai Innovations —
+  [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya)
