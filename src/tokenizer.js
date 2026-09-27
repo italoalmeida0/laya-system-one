@@ -132,16 +132,24 @@ export function buildSequence(tok, state, q, maxLen = 1024, headMaxLen = 256) {
 
 export async function loadTokenizer(modelDir) {
   const dir = modelDir || await defaultModelDir();
-  const isRemote = /^(https?:|file:|\/)/.test(String(dir)) || isBrowser;
-  const path = isRemote ? null : await nodePath();
-  const src = isRemote ? String(dir).replace(/\/?$/, '/tokenizer.json') : path.join(dir, 'tokenizer.json');
+  // Only a real URL is fetched. Two things look like one but are not:
+  //   - an absolute filesystem path, which starts with '/' on Linux (every CI
+  //     job tried fetch('/home/runner/.../tokenizer.json') and got Invalid URL);
+  //   - a Windows drive path, where 'C:' matches a URL scheme pattern.
+  const isUrl = /^(https?|file|data|blob):/i.test(dir);
+  // In a browser everything is a URL, including a relative one.
+  const fetchIt = isUrl || isBrowser;
 
   let json;
-  if (isRemote) {
-    json = await (await fetch(src)).json();
+  if (fetchIt) {
+    const src = dir.replace(/\/?$/, '/') + 'tokenizer.json';
+    const res = await fetch(src);
+    if (!res.ok) throw new Error(`could not fetch the tokenizer: ${res.status} ${src}`);
+    json = await res.json();
   } else {
+    const path = await nodePath();
     const fs = await import('node:fs');
-    json = JSON.parse(await fs.promises.readFile(src, 'utf8'));
+    json = JSON.parse(await fs.promises.readFile(path.join(dir, 'tokenizer.json'), 'utf8'));
   }
   return makeTokenizerCallable(new BpeTokenizer(json));
 }
