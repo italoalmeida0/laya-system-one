@@ -87,10 +87,17 @@ function hasCommand(name) {
   return spawnSync(probe, [name], { encoding: 'utf8', shell: process.platform === 'win32' }).status === 0;
 }
 
-/** True when name@version already exists on the registry. */
-function alreadyPublished(name, version) {
-  const r = runCapture('npm', ['view', `${name}@${version}`, 'version', '--json']);
-  return r.status === 0 && String(r.stdout).includes(version);
+/**
+ * Is name@version on the registry? Retries briefly: the registry is
+ * eventually consistent, so a version published a moment ago can still 404.
+ */
+async function isAlreadyPublished(name, version, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    const r = runCapture('npm', ['view', `${name}@${version}`, 'version', '--json']);
+    if (r.status === 0 && String(r.stdout).includes(version)) return true;
+    if (i < attempts - 1) await new Promise((res) => setTimeout(res, 1500));
+  }
+  return false;
 }
 
 /** Human-readable size of a package directory, for the progress line. */
@@ -290,13 +297,17 @@ async function cmdPublish(args) {
   const otp = args.otp || process.env.LAYA_NPM_OTP || null;
   // 'bun' uploads faster and takes the same flags; 'npm' is the default so a
   // plain `npm login` is enough to get started.
-  const publisher = args.publisher || process.env.LAYA_PUBLISHER || 'npm';
+  // bun by default: it uploads noticeably faster and takes the same flags.
+  // Falls back to npm when bun is not installed, so a plain `npm login` setup
+  // still works without the user knowing about this.
+  const requested = args.publisher || process.env.LAYA_PUBLISHER || null;
+  const publisher = requested || (hasCommand('bun') ? 'bun' : 'npm');
   if (!['npm', 'bun'].includes(publisher)) {
     console.error(`[publish] unknown publisher '${publisher}' (use npm or bun)`);
     process.exit(1);
   }
   if (publisher === 'bun' && !hasCommand('bun')) {
-    console.error('[publish] bun is not on PATH; install it or use --publisher npm');
+    console.error('[publish] --publisher bun was requested but bun is not on PATH');
     process.exit(1);
   }
   if (!['alpha', 'beta', 'latest', 'next'].includes(tag)) {
@@ -345,7 +356,7 @@ async function cmdPublish(args) {
 
     // republishing a version is the most common failure, and npm reports it
     // with a wall of output. Checking first keeps the run readable.
-    if (!dryRun && alreadyPublished(pkg.name, pkg.version)) {
+    if (!dryRun && await isAlreadyPublished(pkg.name, pkg.version)) {
       console.log(`[publish] [${++done}/${total}] ${pkg.name}@${pkg.version} is already published, skipping`);
       results.push([pkg.name, 'already published (skipped)']);
       continue;
@@ -360,7 +371,15 @@ async function cmdPublish(args) {
     console.log(`\n[publish] [${++done}/${total}] ${dryRun ? 'checking' : 'uploading'} ${pkg.name}@${pkg.version} (${size}) ...`);
     const r = await runInteractive(publisher, npmArgs, { cwd: dir });
     if (r.code !== 0) {
-      console.error(`\n[publish] FAILED ${pkg.name}@${pkg.version} (npm exited ${r.code})`);
+      // The pre-check races the registry's eventual consistency: a version
+      // published seconds ago can still look absent. If the publisher itself
+      // says the version is taken, that is a success for our purposes.
+      if (!dryRun && (await isAlreadyPublished(pkg.name, pkg.version))) {
+        console.log(`[publish] ✓ ${pkg.name}@${pkg.version} is already on the registry`);
+        results.push([pkg.name, 'already published (skipped)']);
+        continue;
+      }
+      console.error(`\n[publish] FAILED ${pkg.name}@${pkg.version} (${publisher} exited ${r.code})`);
       console.error('[publish] stopping so you can fix it before the rest go out.');
       process.exit(1);
     }
@@ -403,8 +422,8 @@ function main() {
   list                             show the staged leaf packages
   publish --tag alpha              publish (safe: alpha dist-tag)
   publish --tag alpha --otp 123456  publish, supplying the 2FA code yourself
-  publish --tag alpha --publisher bun
-                                   publish with bun (faster uploads)
+  publish --tag alpha --publisher npm
+                                   force npm (default is bun when installed)
   publish --tag latest --i-understand-latest
                                    the real release (verify the alpha first)
   publish --tag alpha --dry-run    show what would be published
