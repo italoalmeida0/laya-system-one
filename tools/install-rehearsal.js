@@ -95,9 +95,13 @@ async function startRegistry() {
   // the entry package itself, packed on the fly so the rehearsal installs the
   // real tarball npm would receive (files whitelist and all)
   const packOut = fs.mkdtempSync(path.join(os.tmpdir(), 'laya-entry-pack-'));
-  const pack = spawnSync('npm', ['pack', '--pack-destination', packOut], { cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32' });
+  // --ignore-scripts: packing must not run prepublishOnly, which would start
+  // this rehearsal again from inside itself.
+  const pack = spawnSync('npm', ['pack', '--ignore-scripts', '--pack-destination', packOut], { cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32' });
   if (pack.status !== 0) throw new Error(`npm pack of the entry package failed: ${pack.stderr}`);
-  const entryTgz = path.join(packOut, fs.readdirSync(packOut).find((f) => f.endsWith('.tgz')));
+  const tgz = fs.readdirSync(packOut).find((f) => f.endsWith('.tgz'));
+  if (!tgz) throw new Error(`npm pack produced no tarball in ${packOut}: ${pack.stdout}`);
+  const entryTgz = path.join(packOut, tgz);
   packages.set(`${MAIN.name}@${VERSION}`, { tgz: entryTgz, pkg: MAIN });
 
   let port = 0;

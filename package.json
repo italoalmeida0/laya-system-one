@@ -38,7 +38,7 @@
     "model:publish": "node ./tools/model-chunks.js publish",
     "model:acquire": "node ./tools/acquire-model.js",
     "postinstall": "node ./bin/postinstall.js",
-    "prepublishOnly": "npm run check:quick && npm run preflight",
+    "prepublishOnly": "node ./tools/preflight-publish.js",
     "tokenizer:diff": "node ./tools/tokenizer-diff.js",
     "bench": "node ./tools/bench.js",
     "bench:wasm": "node ./tools/bench.js --backend wasm",
