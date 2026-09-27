@@ -57,36 +57,34 @@ function runCapture(cmd, cmdArgs, opts = {}) {
 }
 
 /**
- * Run a command with its output streamed to the terminal as it happens.
+ * Run a command with a real terminal attached.
  *
- * `npm publish` uploads tens of megabytes per package and can take a while;
- * capturing its output and printing it at the end leaves the user staring at
- * a frozen screen, unable to tell progress from a hang. Streaming also keeps
- * stdin attached, which matters because npm may ask for something (a 2FA/OTP
- * code, a login confirmation) and a captured pipe would deadlock waiting for
- * an answer that could never be typed.
+ * `npm publish` decides how to authenticate by looking at whether its output
+ * is a terminal. With a piped stdout it cannot open the browser flow, so it
+ * falls back to asking for a one-time password and fails with EOTP when none
+ * is supplied. Inheriting all three streams gives npm the TTY it needs, so it
+ * prints the login URL and waits for the browser, exactly like `npm login`.
  *
- * Returns { code, output } - output is the combined text, for error matching.
+ * The trade-off is that the output cannot be captured for error matching, so
+ * failures are judged by the exit code and "already published" is checked
+ * beforehand with `npm view`.
  */
-function runStreaming(cmd, cmdArgs, opts = {}) {
+function runInteractive(cmd, cmdArgs, opts = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, cmdArgs, {
-      stdio: ['inherit', 'pipe', 'pipe'],
+      stdio: 'inherit',
       shell: process.platform === 'win32',
       ...opts
     });
-    let output = '';
-    const tee = (stream, sink) => {
-      stream.on('data', (d) => {
-        output += d;
-        sink.write(d);
-      });
-    };
-    tee(child.stdout, process.stdout);
-    tee(child.stderr, process.stderr);
-    child.on('error', (err) => resolve({ code: 1, output: output + String(err) }));
-    child.on('close', (code) => resolve({ code, output }));
+    child.on('error', () => resolve({ code: 1 }));
+    child.on('close', (code) => resolve({ code }));
   });
+}
+
+/** True when name@version already exists on the registry. */
+function alreadyPublished(name, version) {
+  const r = runCapture('npm', ['view', `${name}@${version}`, 'version', '--json']);
+  return r.status === 0 && String(r.stdout).includes(version);
 }
 
 /** Human-readable size of a package directory, for the progress line. */
@@ -280,6 +278,10 @@ function cmdInspect() {
 async function cmdPublish(args) {
   const tag = args.tag || 'alpha';
   const dryRun = args['dry-run'] === true;
+  // A one-time password from an authenticator app. npm's browser flow prints a
+  // URL and can exit with EOTP instead of waiting, so a code is the path that
+  // always works - and it is reused for every package in this run.
+  const otp = args.otp || process.env.LAYA_NPM_OTP || null;
   if (!['alpha', 'beta', 'latest', 'next'].includes(tag)) {
     console.error(`[publish] refusing unknown tag '${tag}' (use alpha|beta|next|latest)`);
     process.exit(1);
@@ -314,7 +316,9 @@ async function cmdPublish(args) {
 
   const total = order.length;
   console.log(`[publish] ${total} package(s) to ${dryRun ? 'check' : 'publish'}, leaf packages first.`);
-  console.log('[publish] each upload prints npm output as it happens; the large ones take a moment.\n');
+  console.log('[publish] npm may ask you to authenticate (2FA). If it prints a URL, open it;');
+  console.log('[publish] if it exits with EOTP instead, re-run with --otp <code> from your');
+  console.log('[publish] authenticator app, or set LAYA_NPM_OTP.\n');
 
   const results = [];
   let done = 0;
@@ -322,21 +326,23 @@ async function cmdPublish(args) {
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
     if (pkg.private) { results.push([pkg.name, 'skipped (private)']); continue; }
 
+    // republishing a version is the most common failure, and npm reports it
+    // with a wall of output. Checking first keeps the run readable.
+    if (!dryRun && alreadyPublished(pkg.name, pkg.version)) {
+      console.log(`[publish] [${++done}/${total}] ${pkg.name}@${pkg.version} is already published, skipping`);
+      results.push([pkg.name, 'already published (skipped)']);
+      continue;
+    }
+
     const npmArgs = ['publish', '--tag', tag, '--access', 'public'];
     if (dryRun) npmArgs.push('--dry-run');
+    if (otp) npmArgs.push('--otp', otp);
 
     const size = dirSize(dir);
     console.log(`\n[publish] [${++done}/${total}] ${dryRun ? 'checking' : 'uploading'} ${pkg.name}@${pkg.version} (${size}) ...`);
-    const r = await runStreaming('npm', npmArgs, { cwd: dir });
-    const out = r.output || '';
+    const r = await runInteractive('npm', npmArgs, { cwd: dir });
     if (r.code !== 0) {
-      // republishing the same version is the most common failure: reporting
-      // it clearly beats a wall of npm output.
-      if (/cannot publish over|EPUBLISHCONFLICT|previously published/i.test(out)) {
-        results.push([pkg.name, 'already published (skipped)']);
-        continue;
-      }
-      console.error(`\n[publish] FAILED ${pkg.name}@${pkg.version}:\n${out}`);
+      console.error(`\n[publish] FAILED ${pkg.name}@${pkg.version} (npm exited ${r.code})`);
       console.error('[publish] stopping so you can fix it before the rest go out.');
       process.exit(1);
     }
@@ -378,6 +384,7 @@ function main() {
   inspect                          check every staged package is publishable
   list                             show the staged leaf packages
   publish --tag alpha              publish (safe: alpha dist-tag)
+  publish --tag alpha --otp 123456  publish, supplying the 2FA code yourself
   publish --tag latest --i-understand-latest
                                    the real release (verify the alpha first)
   publish --tag alpha --dry-run    show what would be published
