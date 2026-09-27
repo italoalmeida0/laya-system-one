@@ -320,13 +320,22 @@ jobs:
 
       - name: Verify every platform package has a binary
         run: |
+          set -euo pipefail
+          # each package stores its payload as bin/<slot>/<file>, so check for
+          # files anywhere under bin/ rather than a flat bin/ file list
           for pkg in darwin-arm64 darwin-x64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
-            d="dist/release/binaries/@sys-one__laya-serve-$pkg/bin"
-            if [ ! -d "$d" ] || [ -z "$(ls -A "$d")" ]; then
-              echo "MISSING binary for $pkg"; exit 1
+            dir="dist/release/binaries/@sys-one__laya-serve-$pkg"
+            [ -d "$dir" ] || { echo "MISSING package for $pkg"; exit 1; }
+            count=$(find "$dir/bin" -type f 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "MISSING binary for $pkg"; find "$dir" -type f | head; exit 1
             fi
-            echo "ok $pkg"
+            echo "ok $pkg ($count file(s))"
           done
+          # and the universal package must carry every slot
+          uni=$(find dist/release/binaries/@sys-one__laya-serve-universal/bin -type f 2>/dev/null | wc -l)
+          echo "universal: $uni file(s)"
+          [ "$uni" -ge 7 ] || { echo "universal package is incomplete"; exit 1; }
 
       - name: Pack the entry package (npm pack)
         run: |

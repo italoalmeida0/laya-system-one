@@ -216,12 +216,16 @@ function cmdBuild(args) {
     return pkg.source !== null && [].concat(pkg.source).some((slot) => only.includes(slot));
   });
 
-  fs.rmSync(OUT_DIR, { recursive: true, force: true });
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   let built = 0;
   for (const pkg of wanted) {
     const pkgDir = path.join(OUT_DIR, pkg.name.replace('/', '__'));
+    // Clear only the packages this run is about to rewrite. Deleting OUT_DIR
+    // outright would wipe packages another job already staged there - the
+    // entry job assembles the universal package next to the ones it just
+    // copied from the artifacts.
+    fs.rmSync(pkgDir, { recursive: true, force: true });
     const slots = pkg.source === null ? ALL_SOURCES : [].concat(pkg.source);
     const staged = stageSlots(slots, pkgDir);
 
