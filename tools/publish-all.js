@@ -26,7 +26,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -54,6 +54,53 @@ function run(cmd, cmdArgs, opts = {}) {
 
 function runCapture(cmd, cmdArgs, opts = {}) {
   return spawnSync(cmd, cmdArgs, { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
+}
+
+/**
+ * Run a command with its output streamed to the terminal as it happens.
+ *
+ * `npm publish` uploads tens of megabytes per package and can take a while;
+ * capturing its output and printing it at the end leaves the user staring at
+ * a frozen screen, unable to tell progress from a hang. Streaming also keeps
+ * stdin attached, which matters because npm may ask for something (a 2FA/OTP
+ * code, a login confirmation) and a captured pipe would deadlock waiting for
+ * an answer that could never be typed.
+ *
+ * Returns { code, output } - output is the combined text, for error matching.
+ */
+function runStreaming(cmd, cmdArgs, opts = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, cmdArgs, {
+      stdio: ['inherit', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+      ...opts
+    });
+    let output = '';
+    const tee = (stream, sink) => {
+      stream.on('data', (d) => {
+        output += d;
+        sink.write(d);
+      });
+    };
+    tee(child.stdout, process.stdout);
+    tee(child.stderr, process.stderr);
+    child.on('error', (err) => resolve({ code: 1, output: output + String(err) }));
+    child.on('close', (code) => resolve({ code, output }));
+  });
+}
+
+/** Human-readable size of a package directory, for the progress line. */
+function dirSize(dir) {
+  let bytes = 0;
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else bytes += fs.statSync(full).size;
+    }
+  };
+  try { walk(dir); } catch { return 'unknown size'; }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function readMain() {
@@ -265,16 +312,24 @@ async function cmdPublish(args) {
     ROOT // the entry package last
   ];
 
+  const total = order.length;
+  console.log(`[publish] ${total} package(s) to ${dryRun ? 'check' : 'publish'}, leaf packages first.`);
+  console.log('[publish] each upload prints npm output as it happens; the large ones take a moment.\n');
+
   const results = [];
+  let done = 0;
   for (const dir of order) {
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
     if (pkg.private) { results.push([pkg.name, 'skipped (private)']); continue; }
 
     const npmArgs = ['publish', '--tag', tag, '--access', 'public'];
     if (dryRun) npmArgs.push('--dry-run');
-    const r = runCapture('npm', npmArgs, { cwd: dir });
-    const out = `${r.stdout || ''}${r.stderr || ''}`;
-    if (r.status !== 0) {
+
+    const size = dirSize(dir);
+    console.log(`\n[publish] [${++done}/${total}] ${dryRun ? 'checking' : 'uploading'} ${pkg.name}@${pkg.version} (${size}) ...`);
+    const r = await runStreaming('npm', npmArgs, { cwd: dir });
+    const out = r.output || '';
+    if (r.code !== 0) {
       // republishing the same version is the most common failure: reporting
       // it clearly beats a wall of npm output.
       if (/cannot publish over|EPUBLISHCONFLICT|previously published/i.test(out)) {
@@ -286,7 +341,7 @@ async function cmdPublish(args) {
       process.exit(1);
     }
     results.push([pkg.name, dryRun ? 'dry-run ok' : 'published']);
-    console.log(`  ✓ ${pkg.name}@${pkg.version}`);
+    console.log(`[publish] ✓ ${pkg.name}@${pkg.version}`);
   }
 
   console.log('\n[publish] summary:');
