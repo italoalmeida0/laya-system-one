@@ -121,7 +121,7 @@ developer's machine checks and publishes.
 
 | workflow | trigger | what it does |
 |---|---|---|
-| `build-packages.yml` | push to `main`, tag `v*`, manual | builds the binary for each platform on a native runner (plus the musl bundles in Alpine), cuts the model into 13 chunk packages, proves every binary answers 10 questions, and uploads the finished packages as artifacts |
+| `build-packages.yml` | tag `v*`, manual | builds the binary for each platform on a native runner (plus the musl bundles in Alpine), cuts the model into 13 chunk packages, proves every binary answers 10 questions, and uploads the finished packages as artifacts |
 | `verify-published.yml` | manual | installs a **published** version from the real registry on linux glibc/musl (x64 + arm64), Windows (x64 + arm64) and macOS (arm64 + x64), in Node and Bun, and runs a real inference; refuses to pass if the binary came from anywhere but `node_modules` |
 
 Build a specific version on purpose:

@@ -5,7 +5,7 @@
  * The build workflow needs to produce packages for a specific version, chosen
  * when the build is started:
  *
- *   gh workflow run release-packages.yml -f version=1.1.0-alpha.0
+ *   gh workflow run build-packages.yml -f version=1.1.0-alpha.0
  *
  * rather than whatever package.json happened to say when the commit was
  * pushed. Getting this wrong is expensive: npm skips an optionalDependency

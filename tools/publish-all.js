@@ -132,7 +132,7 @@ function cmdDownload(args) {
   const runId = args.run;
   if (!runId) {
     console.error('usage: publish-all.js download --run <github-actions-run-id>');
-    console.error('       (find it with: gh run list --workflow=release-packages.yml)');
+    console.error('       (find it with: gh run list --workflow=build-packages.yml)');
     process.exit(1);
   }
 
@@ -148,7 +148,7 @@ function cmdDownload(args) {
   const status = run('gh', ['run', 'download', String(runId), '--dir', staging]);
   if (status !== 0) {
     console.error('[publish] gh run download failed. Is the gh CLI logged in (gh auth status)?');
-    console.error('[publish] if the run has expired, re-run the build: gh workflow run release-packages.yml');
+    console.error('[publish] if the run has expired, re-run the build: gh workflow run build-packages.yml');
     process.exit(1);
   }
 
@@ -207,7 +207,7 @@ function cmdDownload(args) {
  * Check that everything about to be published agrees on a version.
  *
  * The artifacts were built with whatever version the workflow was told to use
- * (`gh workflow run release-packages.yml -f version=...`). If package.json has
+ * (`gh workflow run build-packages.yml -f version=...`). If package.json has
  * moved on since, publishing them under the new number would ship an entry
  * package whose optionalDependencies point at packages that do not exist -
  * and npm silently skips a missing optional, so the install would look fine
@@ -236,7 +236,7 @@ function checkVersions() {
     console.error(`[publish] either publish under the built version:`);
     console.error(`[publish]   npm version <the-built-version> --no-git-tag-version`);
     console.error(`[publish] or rebuild for this one:`);
-    console.error(`[publish]   gh workflow run release-packages.yml -f version=${want}`);
+    console.error(`[publish]   gh workflow run build-packages.yml -f version=${want}`);
     process.exit(1);
   }
 
